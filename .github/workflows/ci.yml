@@ -1,0 +1,45 @@
+# CI order per docs/06-engineering/deployment.md.
+# No paid provider calls ever run here — tests use fake adapters only.
+# Paid model evaluations are a separate, manual release gate (Milestone 10).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Unit and integration tests (provider fakes only)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Migration validation
+        # Placeholder until Drizzle migrations arrive in Milestone 2:
+        # will run migrations against a clean Postgres and check drift.
+        run: pnpm db:migrate
