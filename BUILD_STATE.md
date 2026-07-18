@@ -5,7 +5,7 @@ Read this before starting a milestone; update it when you finish one. Milestones
 ## Milestone checklist
 
 - [x] M0 — Decisions + scaffold seams (ADR-006, this file, Next.js scaffold, boundary lint, CI)
-- [ ] M1 — Repository foundation (Storybook, tokens/themes, env validation, domain errors, authenticated shell)
+- [x] M1 — Repository foundation (Storybook, tokens/themes, env validation, domain errors, authenticated shell)
 - [ ] M2 — Database and authentication boundary
 - [ ] M3 — Character narrative profiles
 - [ ] M4 — Visual character profiles
@@ -43,7 +43,12 @@ Read this before starting a milestone; update it when you finish one. Milestones
 - 2026-07-17 (M0): `pnpm db:migrate` is a placeholder until Drizzle lands in M2; CI's migration-validation step is likewise a placeholder.
 - 2026-07-17 (M0): Playwright e2e is wired locally (`pnpm test:e2e`) but not yet in CI — add it in M1 when the authenticated shell gives it something real to test.
 - 2026-07-17 (M0): The mobile e2e projects use the iPhone 14 device profile, which runs on WebKit — run `pnpm exec playwright install chromium webkit` on a fresh machine. `next-browser` 0.7.1 is available globally (Homebrew) for live-app verification.
+- 2026-07-18 (M1): Better Auth uses a **memory adapter** (sessions/users reset on restart) — M2 swaps it onto Drizzle/Postgres. `requireActor()` synthesizes `roles: ["owner"]`, `familyIds: []` until M2's membership tables exist.
+- 2026-07-18 (M1): Design tokens live in `src/app/globals.css` (Tailwind v4 `@theme`): Paper light / Lamplight dark, accent terracotta `#a24e2b` (light) / `#e0955a` (dark), story body 19px, all pairs WCAG AA-verified. Fonts: Literata + Fraunces (`weight: "variable"` is required with `axes`).
+- 2026-07-18 (M1): Storybook a11y addon runs in `test: "todo"` mode — violations surface but don't fail; consider flipping to `"error"` once the shell stabilises. Node-project tests alias `server-only` to `tests/stubs/server-only.ts`.
 
 ## Deviations from docs
 
-None yet. If code must diverge from `docs/`, record the conflict here and propose an ADR/doc correction — do not silently invent a third design (`CLAUDE.md` "Source of truth").
+If code must diverge from `docs/`, record the conflict here and propose an ADR/doc correction — do not silently invent a third design (`CLAUDE.md` "Source of truth").
+
+- 2026-07-18 (M1): `docs/04-frontend/app-architecture.md` sketches the app home at `(app)/page.tsx` (i.e. `/`) while also defining a `(marketing)/` group — two route groups cannot both own `/`. Current resolution: `/` = marketing landing, `/app` = authenticated home, `/sign-in` + `/sign-up` = auth. Proposed doc correction: annotate the route sketch so `(app)` pages live under `/app`. Revisit if the marketing surface is dropped (private family app may not need one), which would return the app home to `/`.

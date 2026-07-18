@@ -14,7 +14,14 @@ export default defineConfig({
     projects: [
       {
         extends: true,
+        resolve: {
+          alias: {
+            // `server-only` throws outside an RSC environment.
+            "server-only": path.join(dirname, "tests/stubs/server-only.ts"),
+          },
+        },
         test: {
+          name: "node",
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.ts"],
         },

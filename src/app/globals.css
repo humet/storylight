@@ -1,26 +1,268 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ *
+ * Storylight design tokens
+ *
+ * Two themes — "Paper" (light) and "Lamplight" (dark). Warm neutrals,
+ * no pure white or pure black, one restrained accent. Colour + shadow
+ * tokens are theme-variant and defined on the selectors below; every
+ * other token (type, spacing, radius, motion, z, safe-area, touch) is
+ * theme-invariant. Utilities are generated from these via `@theme`.
+ * ------------------------------------------------------------------ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+
+  /* Paper — light theme */
+  --canvas: #fbf6ee; /* page background — warm paper */
+  --surface: #fffbf3; /* cards, sheets */
+  --surface-raised: #fffdf8; /* raised surfaces (near-white, never #fff) */
+  --ink: #2b2521; /* primary text — warm near-black */
+  --ink-soft: #5e5347; /* secondary text */
+  --ink-muted: #7a6e5f; /* tertiary text, hints */
+  --border: #e5dac7; /* hairline dividers */
+  --border-strong: #d8cab2; /* input borders, stronger edges */
+  --accent: #a24e2b; /* interactive / brand — terracotta */
+  --accent-strong: #a24e2b; /* solid button fill */
+  --accent-hover: #8f4425; /* solid button hover/active */
+  --accent-soft: #f3e4d8; /* soft accent surface tint */
+  --on-accent: #fff7ec; /* text/icon on accent */
+  --focus: #a24e2b; /* focus ring */
+  --danger: #9a3b2c; /* warm red — errors */
+  --danger-soft: #f7e4df; /* soft danger surface tint */
+  --on-danger: #fff7ec; /* text/icon on danger */
+  --success: #4f7a4c; /* calm green */
+  --warning: #b07a22; /* amber */
+
+  /* Elevation — soft, warm-tinted shadows (theme-variant) */
+  --elevation-1:
+    0 1px 2px rgba(60, 43, 28, 0.06), 0 1px 1px rgba(60, 43, 28, 0.04);
+  --elevation-2:
+    0 2px 6px rgba(60, 43, 28, 0.08), 0 4px 12px rgba(60, 43, 28, 0.06);
+  --elevation-3:
+    0 8px 24px rgba(60, 43, 28, 0.12), 0 2px 8px rgba(60, 43, 28, 0.08);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* Auto dark — follows the OS unless a `data-theme` override is present */
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: dark;
+
+    --canvas: #1b1613;
+    --surface: #241d18;
+    --surface-raised: #2c241e;
+    --ink: #ece3d5;
+    --ink-soft: #c4b6a3;
+    --ink-muted: #9b8d7b;
+    --border: #382f27;
+    --border-strong: #473c32;
+    --accent: #e4a067;
+    --accent-strong: #e0955a;
+    --accent-hover: #eba972;
+    --accent-soft: #33261d;
+    --on-accent: #241d18;
+    --focus: #e4a067;
+    --danger: #e89383;
+    --danger-soft: #37231e;
+    --on-danger: #241d18;
+    --success: #8fbf87;
+    --warning: #e0b25e;
+
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.3);
+    --elevation-2:
+      0 2px 6px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+    --elevation-3: 0 8px 24px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Explicit overrides — win over the media query via source order.
+   Usable on <html data-theme="…"> or any wrapping element. */
+:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #fbf6ee;
+  --surface: #fffbf3;
+  --surface-raised: #fffdf8;
+  --ink: #2b2521;
+  --ink-soft: #5e5347;
+  --ink-muted: #7a6e5f;
+  --border: #e5dac7;
+  --border-strong: #d8cab2;
+  --accent: #a24e2b;
+  --accent-strong: #a24e2b;
+  --accent-hover: #8f4425;
+  --accent-soft: #f3e4d8;
+  --on-accent: #fff7ec;
+  --focus: #a24e2b;
+  --danger: #9a3b2c;
+  --danger-soft: #f7e4df;
+  --on-danger: #fff7ec;
+  --success: #4f7a4c;
+  --warning: #b07a22;
+
+  --elevation-1:
+    0 1px 2px rgba(60, 43, 28, 0.06), 0 1px 1px rgba(60, 43, 28, 0.04);
+  --elevation-2:
+    0 2px 6px rgba(60, 43, 28, 0.08), 0 4px 12px rgba(60, 43, 28, 0.06);
+  --elevation-3:
+    0 8px 24px rgba(60, 43, 28, 0.12), 0 2px 8px rgba(60, 43, 28, 0.08);
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #1b1613;
+  --surface: #241d18;
+  --surface-raised: #2c241e;
+  --ink: #ece3d5;
+  --ink-soft: #c4b6a3;
+  --ink-muted: #9b8d7b;
+  --border: #382f27;
+  --border-strong: #473c32;
+  --accent: #e4a067;
+  --accent-strong: #e0955a;
+  --accent-hover: #eba972;
+  --accent-soft: #33261d;
+  --on-accent: #241d18;
+  --focus: #e4a067;
+  --danger: #e89383;
+  --danger-soft: #37231e;
+  --on-danger: #241d18;
+  --success: #8fbf87;
+  --warning: #e0b25e;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.3);
+  --elevation-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --elevation-3: 0 8px 24px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Theme-invariant tokens + Tailwind utility generation.
+   `inline` so colour/shadow utilities resolve the live CSS variable
+   (and therefore re-theme) instead of copying a static value. */
+@theme inline {
+  /* Colour → utilities like bg-canvas, text-ink, border-border */
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-focus: var(--focus);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-on-danger: var(--on-danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  /* Elevation → shadow-sm / shadow-md / shadow-lg */
+  --shadow-sm: var(--elevation-1);
+  --shadow-md: var(--elevation-2);
+  --shadow-lg: var(--elevation-3);
+
+  /* Type families */
+  --font-sans:
+    var(--font-ui, ui-sans-serif), system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-serif:
+    var(--font-literata), Iowan Old Style, Georgia, Cambria, "Times New Roman",
+    serif;
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+
+  /* Type scale — story body sits at 19px, inside the 18–21px band */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.55;
+  --text-base: 1rem;
+  --text-base--line-height: 1.6;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.65;
+  --text-story: 1.1875rem; /* 19px — reader body */
+  --text-story--line-height: 1.75;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 1.15;
+  --text-display: 2.75rem;
+  --text-display--line-height: 1.08;
+
+  /* Radius — soft, book-like corners */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+
+  /* Motion easing */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-gentle: cubic-bezier(0.33, 0, 0.2, 1);
+}
+
+/* Tokens without a Tailwind namespace — still available as var(--…),
+   e.g. z-[var(--z-modal)] or duration-[var(--duration-base)]. */
+:root {
+  /* Motion durations — restrained */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 100;
+  --z-overlay: 1000;
+  --z-modal: 1100;
+  --z-toast: 1200;
+
+  /* Safe-area insets (notches, home indicators) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Minimum comfortable touch target */
+  --touch-min: 44px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Calm, honest focus — visible in both themes */
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Respect reduced-motion — never animate story prose regardless */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
