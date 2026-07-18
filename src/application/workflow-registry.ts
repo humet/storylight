@@ -1,6 +1,8 @@
 import type { StructuredGenerator } from "./ai/generate-structured";
 import type { CharacterRepository } from "./ports/character-repository";
 import type { GenerationRunRepository } from "./ports/generation-run-repository";
+import type { ModelRouteRepository } from "./ports/model-route-repository";
+import type { SeriesRepository } from "./ports/series-repository";
 import type { StoryRepository } from "./ports/story-repository";
 import type { VisualCharacterService } from "./visual-character-service";
 import {
@@ -9,6 +11,8 @@ import {
   type WorkflowRegistry,
 } from "./workflow-engine";
 import { createCreateOneOffStoryWorkflow } from "./workflows/create-one-off-story-workflow";
+import { createCreateSeriesWorkflow } from "./workflows/create-series-workflow";
+import { createGenerateNextChapterWorkflow } from "./workflows/generate-next-chapter-workflow";
 import { createGenerateCharacterCandidatesWorkflow } from "./workflows/generate-character-candidates-workflow";
 import { createStructuredPlanDemoWorkflow } from "./workflows/structured-plan-demo-workflow";
 import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflow";
@@ -31,6 +35,12 @@ export interface WorkflowRegistryDeps {
    */
   storyRepository?: StoryRepository;
   characterRepository?: CharacterRepository;
+  /**
+   * M8 series pipeline dependencies. Optional so earlier-only tests need not
+   * supply them; the series workflows register only when all are present.
+   */
+  seriesRepository?: SeriesRepository;
+  modelRouteRepository?: ModelRouteRepository;
 }
 
 export function createWorkflowRegistry(
@@ -68,6 +78,32 @@ export function createWorkflowRegistry(
           characterRepository: deps.characterRepository,
         }),
       ),
+    );
+  }
+
+  // M8: the series pipeline (create-series + generate-next-chapter). Registered
+  // only when its persistence dependencies are all supplied.
+  if (
+    deps.storyRepository &&
+    deps.characterRepository &&
+    deps.seriesRepository &&
+    deps.modelRouteRepository
+  ) {
+    const chapterDeps = {
+      structuredGenerator: deps.structuredGenerator,
+      generationRunRepository: deps.generationRunRepository,
+      seriesRepository: deps.seriesRepository,
+      storyRepository: deps.storyRepository,
+      characterRepository: deps.characterRepository,
+    };
+    definitions.push(
+      asWorkflowDefinition(
+        createCreateSeriesWorkflow({
+          ...chapterDeps,
+          modelRouteRepository: deps.modelRouteRepository,
+        }),
+      ),
+      asWorkflowDefinition(createGenerateNextChapterWorkflow(chapterDeps)),
     );
   }
 

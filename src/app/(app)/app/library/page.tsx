@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { buttonClassName, EmptyState, StoryCard } from "@/components";
+import {
+  buttonClassName,
+  EmptyState,
+  SeriesProgressCard,
+  StoryCard,
+} from "@/components";
 import { actorOrRedirect } from "../guard";
 import { getStoryServices } from "../stories/service";
 
@@ -45,17 +50,32 @@ export default async function LibraryPage() {
           <ul className="flex flex-col gap-3">
             {stories.map((story) => (
               <li key={story.id}>
-                <StoryCard
-                  title={story.title}
-                  state={
-                    story.status === "generating" ? "generating" : "published"
-                  }
-                  href={
-                    story.status === "generating"
-                      ? `/app/stories/${story.id}/progress`
-                      : `/app/stories/${story.id}`
-                  }
-                />
+                {story.type === "series" ? (
+                  <SeriesProgressCard
+                    title={story.title}
+                    published={story.seriesProgress?.published ?? 0}
+                    total={story.seriesProgress?.total ?? 0}
+                    generating={story.status === "generating"}
+                    href={
+                      story.status === "generating" &&
+                      (story.seriesProgress?.published ?? 0) === 0
+                        ? `/app/series/${story.id}/progress`
+                        : `/app/series/${story.id}`
+                    }
+                  />
+                ) : (
+                  <StoryCard
+                    title={story.title}
+                    state={
+                      story.status === "generating" ? "generating" : "published"
+                    }
+                    href={
+                      story.status === "generating"
+                        ? `/app/stories/${story.id}/progress`
+                        : `/app/stories/${story.id}`
+                    }
+                  />
+                )}
               </li>
             ))}
           </ul>

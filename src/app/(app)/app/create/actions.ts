@@ -2,6 +2,7 @@
 
 import { requireActor } from "@/adapters/auth/require-actor";
 import { toClientError, type ClientError } from "@/lib/errors";
+import { getSeriesServices } from "../series/service";
 import { getStoryServices } from "../stories/service";
 
 /**
@@ -22,6 +23,24 @@ export async function createOneOffStoryAction(
     const actor = await requireActor();
     const { commands } = await getStoryServices();
     const result = await commands.createOneOffStory(actor, input);
+    return { ok: true, storyId: result.storyId, workflowId: result.workflowId };
+  } catch (error) {
+    return { ok: false, error: toClientError(error) };
+  }
+}
+
+export type CreateSeriesResult =
+  | { ok: true; storyId: string; workflowId: string }
+  | { ok: false; error: ClientError };
+
+/** Start a durable create-series workflow (bible → pin → Chapter 1). */
+export async function createSeriesAction(
+  input: unknown,
+): Promise<CreateSeriesResult> {
+  try {
+    const actor = await requireActor();
+    const { commands } = await getSeriesServices();
+    const result = await commands.createSeries(actor, input);
     return { ok: true, storyId: result.storyId, workflowId: result.workflowId };
   } catch (error) {
     return { ok: false, error: toClientError(error) };

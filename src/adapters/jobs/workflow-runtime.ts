@@ -20,6 +20,7 @@ import { createCharacterRepository } from "@/db/repositories/character-repositor
 import { createFamilyRepository } from "@/db/repositories/family-repository";
 import { createGenerationRunRepository } from "@/db/repositories/generation-run-repository";
 import { createModelRouteRepository } from "@/db/repositories/model-route-repository";
+import { createSeriesRepository } from "@/db/repositories/series-repository";
 import { createStoryRepository } from "@/db/repositories/story-repository";
 import { createVisualAssetRepository } from "@/db/repositories/visual-asset-repository";
 import { createWorkflowRepository } from "@/db/repositories/workflow-repository";
@@ -57,13 +58,15 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
   });
 
   // M6 structured-generation stack (capability routing → pipeline → run records).
-  const modelRegistry = createModelRegistry(createModelRouteRepository(db));
+  const modelRouteRepository = createModelRouteRepository(db);
+  const modelRegistry = createModelRegistry(modelRouteRepository);
   const structuredGenerator = createStructuredGenerator({
     modelRegistry,
     languageModel: getLanguageModel(),
     pricing: createModelPricing(),
   });
   const generationRunRepository = createGenerationRunRepository(db);
+  const seriesRepository = createSeriesRepository(db);
 
   const registry = createWorkflowRegistry({
     visualCharacterService,
@@ -71,6 +74,8 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
     generationRunRepository,
     storyRepository,
     characterRepository,
+    seriesRepository,
+    modelRouteRepository,
   });
   const engine = createWorkflowEngine({ repo: workflowRepository, registry });
 

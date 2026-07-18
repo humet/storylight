@@ -43,6 +43,13 @@
       "when": 1784377646012,
       "tag": "0005_easy_christian_walker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784381364372,
+      "tag": "0006_vengeful_wonder_man",
+      "breakpoints": true
     }
   ]
 }

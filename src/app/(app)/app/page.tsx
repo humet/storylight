@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { signOutAction } from "@/app/(auth)/actions";
-import { buttonClassName, EmptyState, StoryCard } from "@/components";
+import {
+  buttonClassName,
+  EmptyState,
+  SeriesProgressCard,
+  StoryCard,
+} from "@/components";
 import { actorOrRedirect } from "./guard";
 import { getStoryServices } from "./stories/service";
 
@@ -30,17 +35,43 @@ export default async function AppHomePage() {
         </h1>
       </header>
 
-      {/* Priority 1: continue a recent story (`mobile-ux.md` Home order). */}
+      {/* Priority 1: continue the current series (`mobile-ux.md` Home order). */}
+      {home.continueSeries ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="font-display text-xl font-semibold text-ink">
+            Continue tonight
+          </h2>
+          <SeriesProgressCard
+            title={home.continueSeries.title}
+            published={home.continueSeries.seriesProgress?.published ?? 0}
+            total={home.continueSeries.seriesProgress?.total ?? 0}
+            generating={false}
+            href={`/app/series/${home.continueSeries.id}`}
+          />
+        </section>
+      ) : null}
+
+      {/* Priority 2: read a recent one-off again. */}
       {home.continueStory ? (
         <section className="flex flex-col gap-3">
           <h2 className="font-display text-xl font-semibold text-ink">
             Read again
           </h2>
-          <StoryCard
-            title={home.continueStory.title}
-            state="published"
-            href={`/app/stories/${home.continueStory.id}`}
-          />
+          {home.continueStory.type === "series" ? (
+            <SeriesProgressCard
+              title={home.continueStory.title}
+              published={home.continueStory.seriesProgress?.published ?? 0}
+              total={home.continueStory.seriesProgress?.total ?? 0}
+              generating={false}
+              href={`/app/series/${home.continueStory.id}`}
+            />
+          ) : (
+            <StoryCard
+              title={home.continueStory.title}
+              state="published"
+              href={`/app/stories/${home.continueStory.id}`}
+            />
+          )}
         </section>
       ) : null}
 
@@ -91,17 +122,32 @@ export default async function AppHomePage() {
           <ul className="flex flex-col gap-3">
             {home.recentStories.map((story) => (
               <li key={story.id}>
-                <StoryCard
-                  title={story.title}
-                  state={
-                    story.status === "generating" ? "generating" : "published"
-                  }
-                  href={
-                    story.status === "generating"
-                      ? `/app/stories/${story.id}/progress`
-                      : `/app/stories/${story.id}`
-                  }
-                />
+                {story.type === "series" ? (
+                  <SeriesProgressCard
+                    title={story.title}
+                    published={story.seriesProgress?.published ?? 0}
+                    total={story.seriesProgress?.total ?? 0}
+                    generating={story.status === "generating"}
+                    href={
+                      story.status === "generating" &&
+                      (story.seriesProgress?.published ?? 0) === 0
+                        ? `/app/series/${story.id}/progress`
+                        : `/app/series/${story.id}`
+                    }
+                  />
+                ) : (
+                  <StoryCard
+                    title={story.title}
+                    state={
+                      story.status === "generating" ? "generating" : "published"
+                    }
+                    href={
+                      story.status === "generating"
+                        ? `/app/stories/${story.id}/progress`
+                        : `/app/stories/${story.id}`
+                    }
+                  />
+                )}
               </li>
             ))}
           </ul>

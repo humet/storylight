@@ -333,12 +333,56 @@ export function createStoryRepository(db: Database): StoryRepository {
           ),
         )
         .orderBy(desc(stories.updatedAt));
+
+      // Series progress (spoiler-free): planned total + accepted-chapter count.
+      const seriesIds = rows
+        .filter((r) => r.type === "series")
+        .map((r) => r.id);
+      const totals = new Map<string, number>();
+      const published = new Map<string, number>();
+      if (seriesIds.length > 0) {
+        const { seriesBibles, chapters } = await import("../schema");
+        const bibleRows = await db
+          .select({
+            storyId: seriesBibles.storyId,
+            chapterCount: seriesBibles.chapterCount,
+          })
+          .from(seriesBibles)
+          .where(inArray(seriesBibles.storyId, seriesIds));
+        for (const b of bibleRows) totals.set(b.storyId, b.chapterCount);
+
+        const chapterRows = await db
+          .select({
+            storyId: chapters.storyId,
+            revisionStatus: chapterRevisions.status,
+          })
+          .from(chapters)
+          .innerJoin(
+            chapterRevisions,
+            eq(chapters.currentRevisionId, chapterRevisions.id),
+          )
+          .where(inArray(chapters.storyId, seriesIds));
+        for (const c of chapterRows) {
+          if (c.revisionStatus === "accepted") {
+            published.set(c.storyId, (published.get(c.storyId) ?? 0) + 1);
+          }
+        }
+      }
+
       return rows.map((row): StorySummary => ({
         id: row.id,
         title: row.title ?? null,
+        type: row.type,
         status: row.status,
         updatedAt: row.updatedAt,
         publishedAt: row.publishedAt ?? null,
+        seriesProgress:
+          row.type === "series"
+            ? {
+                published: published.get(row.id) ?? 0,
+                total: totals.get(row.id) ?? 0,
+              }
+            : null,
       }));
     },
 

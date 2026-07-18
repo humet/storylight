@@ -63,9 +63,12 @@ export interface StoryRecord {
 export interface StorySummary {
   id: string;
   title: string | null;
+  type: "one_off" | "series";
   status: StoryLifecycleStatus;
   updatedAt: Date;
   publishedAt: Date | null;
+  /** For a series: chapters published so far and the planned total (spoiler-free). */
+  seriesProgress: { published: number; total: number } | null;
 }
 
 export interface ReaderIllustrationSlot {

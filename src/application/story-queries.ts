@@ -23,7 +23,12 @@ import type {
  */
 
 export interface StoryHomeView {
-  /** The most recent published story to continue, if any. */
+  /**
+   * PRIORITY slot: the most recent in-progress series to continue tonight
+   * (`mobile-ux.md` Home order), if any.
+   */
+  continueSeries: StorySummary | null;
+  /** The most recent published story to read again, if any. */
   continueStory: StorySummary | null;
   /** Recent stories for the library preview (published + in-progress). */
   recentStories: StorySummary[];
@@ -97,8 +102,19 @@ export function createStoryQueries(deps: StoryQueryDeps) {
         characterRepository.listCharacters(familyId),
       ]);
       const published = stories.filter((s) => s.status === "published");
+      // Priority: an in-progress series (published but not yet complete).
+      const continueSeries =
+        published.find(
+          (s) =>
+            s.type === "series" &&
+            s.seriesProgress !== null &&
+            s.seriesProgress.published < s.seriesProgress.total,
+        ) ?? null;
+      const continueStory =
+        published.find((s) => s.id !== continueSeries?.id) ?? null;
       return {
-        continueStory: published[0] ?? null,
+        continueSeries,
+        continueStory,
         recentStories: stories.slice(0, 6),
         hasActiveCharacters: characters.some((c) => c.status === "active"),
       };

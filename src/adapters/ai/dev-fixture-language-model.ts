@@ -25,9 +25,11 @@ import type {
 interface CanonicalContext {
   beatTarget?: { min: number; max: number };
   wordCountTarget?: { min: number; max: number };
-  characters?: { key: string; name: string }[];
+  characters?: { key: string; name: string; apparentAge?: number }[];
   plan?: { title?: string; beats?: { key: string }[] };
   anchorKeys?: string[];
+  chapterCount?: number;
+  chapterNumber?: number;
 }
 
 /** Extract + parse the canonical context JSON from the built envelope. */
@@ -142,6 +144,130 @@ function illustrationFixture(ctx: CanonicalContext): unknown {
   };
 }
 
+/** A VALID series bible for the given chapter count + cast (passes validation). */
+function seriesBibleFixture(ctx: CanonicalContext): unknown {
+  const n = ctx.chapterCount ?? 5;
+  const cast = ctx.characters ?? [{ key: "hero", name: "our hero" }];
+  const centralThread = "the-lost-lantern";
+  const blueprints = Array.from({ length: n }, (_v, i) => {
+    const chapterNumber = i + 1;
+    return {
+      chapterNumber,
+      narrativePurpose: `Move the friends one gentle step along their quest (chapter ${chapterNumber}).`,
+      openingState: "The friends wake to a soft, hopeful morning.",
+      localGoal: "Find the next small clue on the path.",
+      conflict: "A gentle obstacle asks them to be brave and kind.",
+      majorBeats: [
+        { key: `c${chapterNumber}-b1`, description: "They set out together." },
+        {
+          key: `c${chapterNumber}-b2`,
+          description: "They help someone and learn something.",
+        },
+      ],
+      emotionalMovement: "From worry to warm reassurance.",
+      informationRevealed: "A small, kind truth about the Moonwood.",
+      threadsIntroduced: chapterNumber === 1 ? [centralThread] : [],
+      threadsAdvanced:
+        chapterNumber > 1 && chapterNumber < n ? [centralThread] : [],
+      threadsResolved: chapterNumber === n ? [centralThread] : [],
+      closingState: "The friends settle in, cosy and safe.",
+      tomorrowPromise:
+        chapterNumber < n
+          ? "Tomorrow, a new path opens through the trees."
+          : "And so the whole story is told.",
+    };
+  });
+  return {
+    schemaVersion: "series-bible.v1",
+    title: "The Moonwood Friends",
+    spoilerFreePremise:
+      "A gentle band of friends explore a glowing night forest.",
+    internalSynopsis:
+      "The friends follow the light of a lost lantern through the Moonwood, learning that kindness lights every path, and return it home.",
+    emotionalPromise: "Courage grows from small, shared kindnesses.",
+    worldRules: ["The Moonwood only glows for travellers who are kind."],
+    locations: [
+      { key: "home", name: "The warm house" },
+      { key: "moonwood", name: "The Moonwood" },
+    ],
+    startingLocationKey: "home",
+    cast: cast.map((c) => ({ characterKey: c.key, role: "a brave friend" })),
+    centralQuestion:
+      "Can the friends return the lost lantern before the last night?",
+    centralConflict: "The Moonwood is growing dark and needs its lantern back.",
+    plannedEnding:
+      "The lantern is returned, the Moonwood glows warmly again, and the friends sleep soundly.",
+    characterArcs: cast.map((c) => ({
+      characterKey: c.key,
+      arc: "learns that being kind is its own kind of brave",
+    })),
+    plotThreads: [
+      {
+        threadKey: centralThread,
+        description: "A lantern that lights the Moonwood has gone missing.",
+        introduceInChapter: 1,
+        resolveInChapter: n,
+        central: true,
+      },
+    ],
+    chapterBlueprints: blueprints,
+    immutableFacts: [
+      { factKey: "moonwood-glows", statement: "The Moonwood glows at night." },
+    ],
+    forbiddenDevelopments: ["No friend is ever truly lost."],
+  };
+}
+
+/** A valid chapter plan (beats within the beat band; protagonist from the cast). */
+function chapterPlanFixture(ctx: CanonicalContext): unknown {
+  const beatCount = ctx.beatTarget?.min ?? 6;
+  const protagonistKey = ctx.characters?.[0]?.key ?? "hero";
+  const protagonistName = ctx.characters?.[0]?.name ?? "our hero";
+  const beats = Array.from({ length: beatCount }, (_v, i) => ({
+    key: `beat-${i + 1}`,
+    description:
+      i === 0
+        ? `${protagonistName} wakes and remembers the quest`
+        : i === beatCount - 1
+          ? `${protagonistName} settles in, cosy and hopeful for tomorrow`
+          : `${protagonistName} takes another gentle, brave step`,
+  }));
+  return {
+    schemaVersion: "chapter-plan.v1",
+    title: "Into the Moonwood",
+    setting: "A soft path winding into the glowing Moonwood",
+    protagonistKey,
+    protagonistDesire: "to follow the lantern's light a little further",
+    obstacle: "the path forks and the way is unclear",
+    emotionalTheme: "finding courage in small, kind steps",
+    beats,
+    climax: "For a moment the light dims and the way home is unclear",
+    resolution: "A gentle friend of the wood lights the kinder path",
+    calmingClose: "Warm and sleepy, the friends rest, ready for tomorrow",
+  };
+}
+
+/** A minimal, always-valid continuity change set (applies cleanly to any state). */
+function continuityChangeFixture(): unknown {
+  return {
+    schemaVersion: "continuity-change.v1",
+    currentTime: "night",
+    currentLocationId: null,
+    characterMoves: [],
+    emotionChanges: [],
+    outfitChanges: [],
+    possessionChanges: [],
+    knowledgeGains: [],
+    readerKnowledgeGains: [],
+    relationshipChanges: [],
+    temporaryConditionChanges: [],
+    threadTransitions: [],
+    locationDiscoveries: [],
+    newFacts: [],
+    supersededFacts: [],
+  };
+}
+
 export function createDevFixtureLanguageModel(): LanguageModel {
   return {
     async generate(
@@ -153,6 +279,9 @@ export function createDevFixtureLanguageModel(): LanguageModel {
         case "StorylightOneOffPlan":
           payload = planFixture(ctx);
           break;
+        case "StorylightChapterPlan":
+          payload = chapterPlanFixture(ctx);
+          break;
         case "StorylightChapterDraft":
           payload = draftFixture(ctx);
           break;
@@ -161,6 +290,12 @@ export function createDevFixtureLanguageModel(): LanguageModel {
           break;
         case "StorylightIllustrationPlan":
           payload = illustrationFixture(ctx);
+          break;
+        case "StorylightSeriesBible":
+          payload = seriesBibleFixture(ctx);
+          break;
+        case "StorylightContinuityChange":
+          payload = continuityChangeFixture();
           break;
         default:
           payload = {};

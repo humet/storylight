@@ -14,6 +14,8 @@ export { CharacterCard } from "./CharacterCard";
 export type { CharacterCardProps } from "./CharacterCard";
 export { StoryCard } from "./StoryCard";
 export type { StoryCardProps, StoryCardState } from "./StoryCard";
+export { SeriesProgressCard } from "./SeriesProgressCard";
+export type { SeriesProgressCardProps } from "./SeriesProgressCard";
 export { ProgressStage } from "./ProgressStage";
 export type { ProgressStageProps, ProgressStageState } from "./ProgressStage";
 export { ReaderImage } from "./ReaderImage";
