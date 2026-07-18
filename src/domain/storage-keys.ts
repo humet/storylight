@@ -43,3 +43,35 @@ export function buildVisualAssetKey(parts: VisualAssetKeyParts): string {
   }
   return `families/${familyId}/characters/${characterId}/profiles/${parts.version}/${assetId}`;
 }
+
+/**
+ * Chapter illustration key scheme (`docs/05-backend/storage.md` "Key structure",
+ * chapter/revision scheme). Scoped to the family, story, chapter AND the immutable
+ * chapter revision the illustration belongs to, so a superseded revision's images
+ * never collide with a re-published one:
+ *   families/{familyId}/stories/{storyId}/chapters/{chapterId}/revisions/{chapterRevisionId}/illustrations/{specId}/{assetId}
+ */
+export interface IllustrationAssetKeyParts {
+  familyId: string;
+  storyId: string;
+  chapterId: string;
+  chapterRevisionId: string;
+  specId: string;
+  assetId: string;
+}
+
+/** Build the private key for a chapter-illustration original/derivative asset. */
+export function buildIllustrationAssetKey(
+  parts: IllustrationAssetKeyParts,
+): string {
+  const familyId = assertSafeSegment("familyId", parts.familyId);
+  const storyId = assertSafeSegment("storyId", parts.storyId);
+  const chapterId = assertSafeSegment("chapterId", parts.chapterId);
+  const chapterRevisionId = assertSafeSegment(
+    "chapterRevisionId",
+    parts.chapterRevisionId,
+  );
+  const specId = assertSafeSegment("specId", parts.specId);
+  const assetId = assertSafeSegment("assetId", parts.assetId);
+  return `families/${familyId}/stories/${storyId}/chapters/${chapterId}/revisions/${chapterRevisionId}/illustrations/${specId}/${assetId}`;
+}

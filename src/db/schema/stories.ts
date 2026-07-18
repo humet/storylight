@@ -89,6 +89,12 @@ export const stories = pgTable(
     status: storyStatus("status").notNull().default("generating"),
     /** Set from the accepted plan on publication; null while generating. */
     title: varchar("title", { length: 160 }),
+    /**
+     * The original generation command (IDs + choices, never raw model output),
+     * stored so a one-off can be RE-GENERATED into a new text revision (M9 parent
+     * action "Try another wording"). Null for stories created before M9.
+     */
+    generationInput: jsonb("generation_input").$type<unknown>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -236,6 +242,17 @@ export const illustrationSpecs = pgTable(
     sceneDescription: text("scene_description").notNull(),
     aspect: illustrationAspect("aspect").notNull(),
     schemaVersion: text("schema_version").notNull(),
+    /**
+     * DB character ids of the children who appear in this scene (M9). Populated at
+     * publish from the workflow's active cast so the image job knows whose approved
+     * reference set to attach (rule 6). Empty when the scene has no named children.
+     */
+    subjectCharacterIds: jsonb("subject_character_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    /** The most prominent child's DB id (gets a second-angle reference), if any. */
+    prominentCharacterId: uuid("prominent_character_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

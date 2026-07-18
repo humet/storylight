@@ -50,3 +50,19 @@ export const SaveReadingProgressCommandSchema = z.object({
 export type SaveReadingProgressCommand = z.infer<
   typeof SaveReadingProgressCommandSchema
 >;
+
+/** M9 parent action: repaint one illustration (a new image job for a spec). */
+export const RegenerateIllustrationCommandSchema = z.object({
+  specId: z.uuid(),
+});
+export type RegenerateIllustrationCommand = z.infer<
+  typeof RegenerateIllustrationCommandSchema
+>;
+
+/** M9 parent action: "Try another wording" — re-generate a one-off's text. */
+export const RegenerateChapterCommandSchema = z.object({
+  storyId: z.uuid(),
+});
+export type RegenerateChapterCommand = z.infer<
+  typeof RegenerateChapterCommandSchema
+>;

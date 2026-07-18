@@ -92,6 +92,12 @@ export interface WorkflowDefinition<Input = unknown> {
   stages: WorkflowStage[];
   /** Copy shown when queued/parked before a specific stage label applies. */
   pendingLabel: string;
+  /**
+   * Scheduling hint forwarded to the dispatcher: "background" for fill-in work
+   * nobody is actively waiting on (illustration jobs); omitted/"interactive"
+   * for parent-facing story/chapter workflows. See DispatchOptions.priority.
+   */
+  dispatchPriority?: "interactive" | "background";
   retryPolicy?: RetryPolicy;
   /** Extract the domain entity this workflow acts on (for correlation lookups). */
   entityId?: (input: Input) => string | undefined;

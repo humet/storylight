@@ -1,10 +1,12 @@
 import type { AuthenticatedActor } from "@/domain/actor";
+import { assertRegenerationPreservesDependencies } from "@/domain/continuity";
 import { nameBasedUuid } from "@/domain/name-uuid";
 import {
   DomainError,
   invalidCommandError,
   unauthorisedError,
 } from "@/lib/errors";
+import { z } from "zod";
 import { authorizeFamilyAction } from "./family-access";
 import type { CharacterRepository } from "./ports/character-repository";
 import type { FamilyRepository } from "./ports/family-repository";
@@ -191,6 +193,68 @@ export function createSeriesCommands(deps: SeriesCommandDeps) {
         chapterNumber: overview.nextChapterNumber,
         created: handle.created,
       };
+    },
+
+    /**
+     * Re-generate a SERIES chapter (M9 + the M8 regeneration note). This is the
+     * home of the mandatory `assertRegenerationPreservesDependencies` guard: before
+     * replacing a chapter's content it checks the LATER-chapter continuity
+     * dependencies. The docs' RESTRICTED-REGENERATION rule (`story-series.md`) means
+     * only the LATEST chapter may be re-written; an earlier chapter is refused with
+     * a safe error (and the guard would independently block dropping a depended-upon
+     * fact). The latest-chapter TEXT re-run itself is deferred (recorded in
+     * BUILD_STATE) — the guard + refusal are wired here as the milestone requires.
+     */
+    async regenerateSeriesChapter(
+      actor: AuthenticatedActor,
+      rawInput: unknown,
+    ): Promise<never> {
+      const { storyId, chapterNumber } = z
+        .object({ storyId: z.uuid(), chapterNumber: z.number().int().min(1) })
+        .parse(rawInput);
+      const familyId = requirePrimaryFamily(actor);
+      await authorizeFamilyAction(familyRepository, {
+        userId: actor.userId,
+        familyId,
+        capability: "story:create",
+      });
+      const overview = await seriesRepository.getSeriesReaderOverview(
+        familyId,
+        storyId,
+      );
+      if (!overview) {
+        throw invalidCommandError({
+          safeMessage: "That series is not available.",
+          internalDetail: `No readable series ${storyId} for family ${familyId}.`,
+          stage: "series.regenerate",
+        });
+      }
+
+      const snapshots = await seriesRepository.getContinuitySnapshots(storyId);
+      const target = snapshots.find(
+        (s) => s.afterChapterNumber === chapterNumber,
+      );
+      const later = snapshots.filter(
+        (s) => s.afterChapterNumber > chapterNumber,
+      );
+      // Wire the guard: a replacement must preserve every fact a later chapter
+      // relies upon. For the latest chapter `later` is empty (trivially clean); for
+      // an earlier chapter this throws if a depended-upon fact would be dropped.
+      if (target) {
+        assertRegenerationPreservesDependencies(
+          target.state,
+          later.map((s) => s.state),
+        );
+      }
+      // RESTRICTED regeneration: only the most recent published chapter may change.
+      throw invalidCommandError({
+        safeMessage:
+          later.length > 0
+            ? "Only the most recent chapter can be re-written. Earlier chapters are locked to keep the story consistent."
+            : "Re-writing a series chapter isn't available yet.",
+        internalDetail: `Series chapter regeneration not yet supported (story ${storyId}, chapter ${chapterNumber}, ${later.length} later snapshots).`,
+        stage: "series.regenerate",
+      });
     },
 
     /** Persist a reader's progress through a specific series chapter. */

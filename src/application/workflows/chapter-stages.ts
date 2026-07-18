@@ -1,7 +1,10 @@
 import type { CharacterRepository } from "../ports/character-repository";
 import type { GenerationRunRepository } from "../ports/generation-run-repository";
+import type { IllustrationRepository } from "../ports/illustration-repository";
+import type { IllustrationJobStarter } from "../ports/illustration-job-starter";
 import type { SeriesRepository } from "../ports/series-repository";
 import type { StoryRepository } from "../ports/story-repository";
+import { createDispatchIllustrationsStage } from "./illustration-dispatch";
 import type {
   StageContext,
   StageResult,
@@ -98,6 +101,7 @@ export const CHAPTER_STAGE_KEYS = [
   "chapter-continuity",
   "chapter-illustration",
   "chapter-publish",
+  "chapter-dispatch-illustrations",
 ] as const;
 
 const STEP_BUDGET: WorkflowBudget = {
@@ -113,6 +117,13 @@ export interface ChapterStagesDeps {
   seriesRepository: SeriesRepository;
   storyRepository: StoryRepository;
   characterRepository: CharacterRepository;
+  /**
+   * M9: dispatch per-spec image jobs after the chapter publication commits.
+   * Optional so earlier-only tests need not supply the image stack — when absent
+   * the final dispatch stage is omitted (text still publishes with pending slots).
+   */
+  illustrationRepository?: IllustrationRepository;
+  illustrationJobStarter?: IllustrationJobStarter;
 }
 
 interface ChapterContextOutput {
@@ -803,6 +814,7 @@ export function createChapterStages(deps: ChapterStagesDeps): WorkflowStage[] {
       run: async (ctx: StageContext): Promise<StageResult> => {
         const { execution } = ctx;
         const storyId = seriesInputStoryId(ctx);
+        const context = await requireContext(storyId);
         const { chapterNumber, isFinalChapter } = (await ctx.getStageOutput(
           "chapter-context",
         )) as ChapterContextOutput;
@@ -821,6 +833,14 @@ export function createChapterStages(deps: ChapterStagesDeps): WorkflowStage[] {
         const specsArtifact = await readArtifact<{
           illustrations: (IllustrationSpec & { afterParagraph: number })[];
         }>(execution.id, "chapter-illustration");
+
+        // Every scene shares the series cast for MVP; the protagonist is prominent.
+        const subjectCharacterIds = context.storyDna.characters.map(
+          (c) => c.id,
+        );
+        const prominentCharacterId =
+          context.storyDna.characters.find((c) => c.key === plan.protagonistKey)
+            ?.id ?? null;
 
         const { chapterId, revisionId } =
           await seriesRepository.publishSeriesChapter({
@@ -845,6 +865,8 @@ export function createChapterStages(deps: ChapterStagesDeps): WorkflowStage[] {
               sceneDescription: s.sceneDescription,
               aspect: s.aspect,
               schemaVersion: illustrationPlanWireSchema.schemaVersion,
+              subjectCharacterIds,
+              prominentCharacterId,
             })),
             continuityState: continuity.nextState,
             threadStates: continuity.threadStates,
@@ -853,5 +875,22 @@ export function createChapterStages(deps: ChapterStagesDeps): WorkflowStage[] {
         return { output: { chapterId, revisionId, chapterNumber } };
       },
     },
+
+    // 9) DISPATCH — start one image job per spec AFTER the chapter published.
+    ...(deps.illustrationRepository && deps.illustrationJobStarter
+      ? [
+          createDispatchIllustrationsStage(
+            {
+              illustrationRepository: deps.illustrationRepository,
+              illustrationJobStarter: deps.illustrationJobStarter,
+            },
+            {
+              key: "chapter-dispatch-illustrations",
+              publishStageKey: "chapter-publish",
+              storyIdOf: seriesInputStoryId,
+            },
+          ),
+        ]
+      : []),
   ];
 }

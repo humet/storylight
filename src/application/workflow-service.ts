@@ -153,7 +153,10 @@ export function createWorkflowService(deps: WorkflowServiceDeps) {
       // Dispatch on first creation. (A duplicate submission of an in-flight run
       // does not need another dispatch; a resumed/failed run is re-driven via
       // resumeWorkflow.)
-      if (created) await dispatcher.dispatch(execution.id);
+      if (created)
+        await dispatcher.dispatch(execution.id, {
+          priority: def.dispatchPriority,
+        });
 
       return {
         workflowId: execution.id,
@@ -242,7 +245,9 @@ export function createWorkflowService(deps: WorkflowServiceDeps) {
       });
       const requeued = await workflowRepository.requeue(familyId, workflowId);
       if (!requeued) return null;
-      await dispatcher.dispatch(requeued.id);
+      await dispatcher.dispatch(requeued.id, {
+        priority: definitionFor(existing.type).dispatchPriority,
+      });
       return toStatusView(requeued);
     },
   };

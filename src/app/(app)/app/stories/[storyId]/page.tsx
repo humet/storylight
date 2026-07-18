@@ -7,6 +7,10 @@ import type { ReaderIllustrationSlot } from "@/application/ports/story-repositor
 import { actorOrRedirect } from "../../guard";
 import { getStoryServices } from "../service";
 import { ReaderProgress } from "./ReaderProgress";
+import {
+  regenerateChapterAction,
+  regenerateIllustrationsAction,
+} from "./parent-actions";
 
 export const metadata: Metadata = {
   title: "Storylight",
@@ -68,6 +72,8 @@ export default async function StoryReaderPage({
     return (slotsByPosition.get(position) ?? []).map((slot) => (
       <ReaderImage
         key={slot.anchorKey}
+        specId={slot.specId}
+        status={slot.status}
         caption={slot.caption}
         aspect={slot.aspect}
       />
@@ -106,6 +112,27 @@ export default async function StoryReaderPage({
               >
                 Read again from the top
               </Link>
+              <form action={regenerateChapterAction}>
+                <input type="hidden" name="storyId" value={storyId} />
+                <button
+                  type="submit"
+                  className="w-full rounded-lg px-3 py-2 text-left font-sans text-sm text-ink hover:bg-accent-soft"
+                >
+                  Try another wording
+                </button>
+              </form>
+              {reader.illustrations.length > 0 ? (
+                <form action={regenerateIllustrationsAction}>
+                  <input type="hidden" name="storyId" value={storyId} />
+                  <button
+                    type="submit"
+                    data-testid="regenerate-illustrations"
+                    className="w-full rounded-lg px-3 py-2 text-left font-sans text-sm text-ink hover:bg-accent-soft"
+                  >
+                    Repaint the pictures
+                  </button>
+                </form>
+              ) : null}
             </nav>
           </details>
         </div>

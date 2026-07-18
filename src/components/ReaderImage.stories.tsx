@@ -14,10 +14,18 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Landscape: Story = {
+export const Pending: Story = {
+  args: { status: "pending" },
   play: async ({ canvas }) => {
     await expect(canvas.getByText(/rosa lifts the lantern/i)).toBeVisible();
-    await expect(canvas.getByText(/coming soon/i)).toBeVisible();
+    await expect(canvas.getByText(/painting this page/i)).toBeVisible();
+  },
+};
+
+export const Failed: Story = {
+  args: { status: "failed" },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/resting for now/i)).toBeVisible();
   },
 };
 

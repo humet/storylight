@@ -133,4 +133,16 @@ export interface VisualAssetRepository {
     familyId: string,
     characterId: string,
   ): Promise<ReferenceAsset[]>;
+
+  /**
+   * The approved reference set of a SPECIFIC visual-profile version, ordered by
+   * position (M9). Used to consume a series' PINNED visual-profile versions when
+   * selecting references for a chapter illustration (rule 8) — a one-off uses
+   * {@link getApprovedReferenceSet} (the character's current) instead. Empty when
+   * the profile has no reference assets in this family.
+   */
+  getReferenceSetByProfileId(
+    familyId: string,
+    visualProfileId: string,
+  ): Promise<ReferenceAsset[]>;
 }

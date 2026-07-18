@@ -16,6 +16,7 @@ import {
   chapterRevisions,
   chapters,
   continuitySnapshots,
+  illustrationPublications,
   illustrationSpecs,
   plotThreadStates,
   plotThreads,
@@ -23,6 +24,7 @@ import {
   seriesBibles,
   stories,
 } from "../schema";
+import { readerIllustrationStatus } from "./story-repository";
 
 /**
  * Drizzle implementation of {@link SeriesRepository}. Only this layer knows the
@@ -202,6 +204,32 @@ export function createSeriesRepository(db: Database): SeriesRepository {
       };
     },
 
+    async getPinnedVisualProfiles(
+      storyId,
+    ): Promise<Record<string, string> | null> {
+      const [row] = await db
+        .select({ pinned: seriesBibles.pinnedVisualProfiles })
+        .from(seriesBibles)
+        .where(eq(seriesBibles.storyId, storyId))
+        .limit(1);
+      return row ? row.pinned : null;
+    },
+
+    async getContinuitySnapshots(storyId) {
+      const rows = await db
+        .select({
+          afterChapterNumber: continuitySnapshots.afterChapterNumber,
+          state: continuitySnapshots.state,
+        })
+        .from(continuitySnapshots)
+        .where(eq(continuitySnapshots.storyId, storyId))
+        .orderBy(asc(continuitySnapshots.afterChapterNumber));
+      return rows.map((r) => ({
+        afterChapterNumber: r.afterChapterNumber,
+        state: r.state,
+      }));
+    },
+
     async publishSeriesChapter(input: PublishSeriesChapterInput) {
       const now = input.now ?? new Date();
       const chapterId = await nameBasedUuid(
@@ -321,6 +349,8 @@ export function createSeriesRepository(db: Database): SeriesRepository {
                 sceneDescription: s.sceneDescription,
                 aspect: s.aspect,
                 schemaVersion: s.schemaVersion,
+                subjectCharacterIds: s.subjectCharacterIds,
+                prominentCharacterId: s.prominentCharacterId,
               })
               .onConflictDoNothing({
                 target: [
@@ -509,8 +539,20 @@ export function createSeriesRepository(db: Database): SeriesRepository {
       if (!revision) return null;
 
       const specs = await db
-        .select()
+        .select({
+          id: illustrationSpecs.id,
+          anchorKey: illustrationSpecs.anchorKey,
+          afterParagraph: illustrationSpecs.afterParagraph,
+          caption: illustrationSpecs.caption,
+          aspect: illustrationSpecs.aspect,
+          orderIndex: illustrationSpecs.orderIndex,
+          publicationState: illustrationPublications.state,
+        })
         .from(illustrationSpecs)
+        .leftJoin(
+          illustrationPublications,
+          eq(illustrationPublications.specId, illustrationSpecs.id),
+        )
         .where(eq(illustrationSpecs.revisionId, revision.id))
         .orderBy(asc(illustrationSpecs.orderIndex));
 
@@ -567,10 +609,12 @@ export function createSeriesRepository(db: Database): SeriesRepository {
         title: revision.title,
         paragraphs: revision.bodyParagraphs,
         illustrations: specs.map((s) => ({
+          specId: s.id,
           anchorKey: s.anchorKey,
           afterParagraph: s.afterParagraph,
           caption: s.caption,
           aspect: s.aspect,
+          status: readerIllustrationStatus(s.publicationState),
         })),
         tomorrowPromise,
         isFinalChapter: chapterNumber >= bibleRow.chapterCount,

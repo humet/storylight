@@ -72,10 +72,20 @@ export interface StorySummary {
 }
 
 export interface ReaderIllustrationSlot {
+  /** The illustration spec id — the delivery route path segment when approved. */
+  specId: string;
   anchorKey: string;
   afterParagraph: number;
   caption: string;
   aspect: "portrait" | "landscape" | "square";
+  /**
+   * The resolved image state (M9). `pending` while the image job runs ("Painting
+   * this page"); `approved` serves the derivative via the authorized route;
+   * `failed` shows a calm fallback (manual review / failure) — the text always
+   * stays fully readable regardless (text-first publication, rule: never block
+   * text on image failure).
+   */
+  status: "pending" | "approved" | "failed";
 }
 
 export interface ReadingProgress {
@@ -104,6 +114,13 @@ export interface PublishOneOffInput {
   draftParagraphs: string[];
   wordCount: number;
   schemaVersion: string;
+  /**
+   * A regeneration (M9 "Try another wording"): supersede the chapter's current
+   * accepted revision and publish a NEW accepted revision with an incremented
+   * revision_number (immutable-revision rules preserved). Default false = first
+   * publication (revision 1).
+   */
+  regenerate?: boolean;
   review: {
     review: ReviewArtifact;
     decision: ReviewDecisionKind;
@@ -116,6 +133,10 @@ export interface PublishOneOffInput {
     sceneDescription: string;
     aspect: "portrait" | "landscape" | "square";
     schemaVersion: string;
+    /** DB character ids of the children in this scene (drives reference selection). */
+    subjectCharacterIds: string[];
+    /** The most prominent child's DB id, if any. */
+    prominentCharacterId: string | null;
   }[];
   now?: Date;
 }
@@ -138,9 +159,17 @@ export interface StoryRepository {
     familyId: string;
     userId: string;
     type: "one_off" | "series";
+    /** The original generation command, stored to enable regeneration (M9). */
+    generationInput?: unknown;
   }): Promise<{ created: boolean }>;
 
   getStory(familyId: string, storyId: string): Promise<StoryRecord | null>;
+
+  /** The stored original generation command for a story, or null (M9 regeneration). */
+  getStoryGenerationInput(
+    familyId: string,
+    storyId: string,
+  ): Promise<unknown | null>;
 
   /** The family's preferences, or the defaults when none are stored (no write). */
   getStoryPreferences(familyId: string): Promise<StoryPreferences>;

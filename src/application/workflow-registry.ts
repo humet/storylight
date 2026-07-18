@@ -4,6 +4,15 @@ import type { GenerationRunRepository } from "./ports/generation-run-repository"
 import type { ModelRouteRepository } from "./ports/model-route-repository";
 import type { SeriesRepository } from "./ports/series-repository";
 import type { StoryRepository } from "./ports/story-repository";
+import type { ChapterImageModel } from "./ports/chapter-image-model";
+import type { ImageDerivatives } from "./ports/image-derivatives";
+import type { ImageGenerationRunRepository } from "./ports/image-generation-run-repository";
+import type { IllustrationJobStarter } from "./ports/illustration-job-starter";
+import type { IllustrationRepository } from "./ports/illustration-repository";
+import type { ObjectStorage } from "./ports/object-storage";
+import type { VisionModel } from "./ports/vision-model";
+import type { VisualAssetRepository } from "./ports/visual-asset-repository";
+import type { ImageRouteRegistry } from "./model-routes/image-route-registry";
 import type { VisualCharacterService } from "./visual-character-service";
 import {
   asWorkflowDefinition,
@@ -13,6 +22,7 @@ import {
 import { createCreateOneOffStoryWorkflow } from "./workflows/create-one-off-story-workflow";
 import { createCreateSeriesWorkflow } from "./workflows/create-series-workflow";
 import { createGenerateNextChapterWorkflow } from "./workflows/generate-next-chapter-workflow";
+import { createGenerateIllustrationWorkflow } from "./workflows/generate-illustration-workflow";
 import { createGenerateCharacterCandidatesWorkflow } from "./workflows/generate-character-candidates-workflow";
 import { createStructuredPlanDemoWorkflow } from "./workflows/structured-plan-demo-workflow";
 import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflow";
@@ -41,6 +51,21 @@ export interface WorkflowRegistryDeps {
    */
   seriesRepository?: SeriesRepository;
   modelRouteRepository?: ModelRouteRepository;
+  /**
+   * M9 chapter-illustration stack. Optional so earlier-only tests need not supply
+   * it; the `generate-illustration` workflow registers only when the full image
+   * stack is present, and the one-off/series pipelines gain their dispatch stage
+   * only when `illustrationRepository` + `illustrationJobStarter` are supplied.
+   */
+  illustrationRepository?: IllustrationRepository;
+  illustrationJobStarter?: IllustrationJobStarter;
+  visualAssetRepository?: VisualAssetRepository;
+  objectStorage?: ObjectStorage;
+  chapterImageModel?: ChapterImageModel;
+  visionModel?: VisionModel;
+  imageDerivatives?: ImageDerivatives;
+  imageRunRepository?: ImageGenerationRunRepository;
+  imageRouteRegistry?: ImageRouteRegistry;
 }
 
 export function createWorkflowRegistry(
@@ -76,6 +101,40 @@ export function createWorkflowRegistry(
           generationRunRepository: deps.generationRunRepository,
           storyRepository: deps.storyRepository,
           characterRepository: deps.characterRepository,
+          illustrationRepository: deps.illustrationRepository,
+          illustrationJobStarter: deps.illustrationJobStarter,
+        }),
+      ),
+    );
+  }
+
+  // M9: the per-spec chapter illustration job. Registered only when the full image
+  // stack is present.
+  if (
+    deps.illustrationRepository &&
+    deps.visualAssetRepository &&
+    deps.characterRepository &&
+    deps.seriesRepository &&
+    deps.chapterImageModel &&
+    deps.visionModel &&
+    deps.imageDerivatives &&
+    deps.objectStorage &&
+    deps.imageRunRepository &&
+    deps.imageRouteRegistry
+  ) {
+    definitions.push(
+      asWorkflowDefinition(
+        createGenerateIllustrationWorkflow({
+          illustrationRepository: deps.illustrationRepository,
+          visualAssetRepository: deps.visualAssetRepository,
+          characterRepository: deps.characterRepository,
+          seriesRepository: deps.seriesRepository,
+          chapterImageModel: deps.chapterImageModel,
+          visionModel: deps.visionModel,
+          imageDerivatives: deps.imageDerivatives,
+          objectStorage: deps.objectStorage,
+          imageRunRepository: deps.imageRunRepository,
+          imageRouteRegistry: deps.imageRouteRegistry,
         }),
       ),
     );
@@ -95,6 +154,8 @@ export function createWorkflowRegistry(
       seriesRepository: deps.seriesRepository,
       storyRepository: deps.storyRepository,
       characterRepository: deps.characterRepository,
+      illustrationRepository: deps.illustrationRepository,
+      illustrationJobStarter: deps.illustrationJobStarter,
     };
     definitions.push(
       asWorkflowDefinition(

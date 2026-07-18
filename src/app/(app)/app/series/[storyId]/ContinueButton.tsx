@@ -1,51 +1,48 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useFormStatus } from "react-dom";
 
 import { Button } from "@/components";
-import { continueSeriesAction } from "./continue-action";
+import { continueSeriesFormAction } from "./continue-action";
 
 /**
  * "Continue tonight" — starts the next chapter and moves to the progress screen.
- * Concurrent taps collapse to one workflow (deterministic requestId), so a double
- * tap is safe.
+ *
+ * Rendered as a FORM posting a Server Action (not an onClick handler): a native
+ * form POST works before hydration, so a fast first tap on a freshly-compiled
+ * page cannot be silently dropped. Concurrent taps collapse to one workflow
+ * (deterministic requestId), so a double submit is safe. Failures redirect back
+ * here with a safe message in the `continueError` search param.
  */
 export function ContinueButton({
   storyId,
   chapterNumber,
+  errorMessage,
 }: {
   storyId: string;
   chapterNumber: number;
+  errorMessage?: string | null;
 }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function go() {
-    setBusy(true);
-    setError(null);
-    const result = await continueSeriesAction(storyId);
-    if (result.ok) {
-      router.push(
-        `/app/series/${storyId}/progress?w=${encodeURIComponent(result.workflowId)}`,
-      );
-      return;
-    }
-    setBusy(false);
-    setError(result.error.message);
-  }
-
   return (
-    <div className="flex flex-col gap-2">
-      <Button size="lg" fullWidth onClick={go} disabled={busy}>
-        {busy ? "Beginning…" : `Continue tonight — Chapter ${chapterNumber}`}
-      </Button>
-      {error ? (
+    <form
+      action={continueSeriesFormAction.bind(null, storyId)}
+      className="flex flex-col gap-2"
+    >
+      <SubmitButton chapterNumber={chapterNumber} />
+      {errorMessage ? (
         <p role="alert" className="font-sans text-sm text-danger">
-          {error}
+          {errorMessage}
         </p>
       ) : null}
-    </div>
+    </form>
+  );
+}
+
+function SubmitButton({ chapterNumber }: { chapterNumber: number }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" size="lg" fullWidth disabled={pending}>
+      {pending ? "Beginning…" : `Continue tonight — Chapter ${chapterNumber}`}
+    </Button>
   );
 }

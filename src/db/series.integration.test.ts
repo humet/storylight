@@ -809,6 +809,8 @@ describe("M8 series pipeline", () => {
       sceneDescription: "A scene.",
       aspect: "landscape" as const,
       schemaVersion: "illustration-plan.v1",
+      subjectCharacterIds: [] as string[],
+      prominentCharacterId: null,
     });
     const publishInput = (
       title: string,

@@ -43,6 +43,8 @@ export default async function SeriesChapterReaderPage({
     return (slotsByPosition.get(position) ?? []).map((slot) => (
       <ReaderImage
         key={slot.anchorKey}
+        specId={slot.specId}
+        status={slot.status}
         caption={slot.caption}
         aspect={slot.aspect}
       />

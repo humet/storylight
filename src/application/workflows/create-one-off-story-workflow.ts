@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import type { CharacterRepository } from "../ports/character-repository";
 import type { GenerationRunRepository } from "../ports/generation-run-repository";
+import type { IllustrationRepository } from "../ports/illustration-repository";
+import type { IllustrationJobStarter } from "../ports/illustration-job-starter";
 import type { StoryRepository } from "../ports/story-repository";
+import { createDispatchIllustrationsStage } from "./illustration-dispatch";
 import type {
   StageContext,
   StageResult,
@@ -92,6 +95,8 @@ export const CreateOneOffStoryInputSchema = z.object({
   theme: z.string().max(120).nullable().default(null),
   length: z.enum(STORY_LENGTHS),
   tone: z.enum(STORY_TONES),
+  /** M9: a regeneration publishes a NEW accepted revision, superseding the prior. */
+  regenerate: z.boolean().default(false),
 });
 export type CreateOneOffStoryInput = z.infer<
   typeof CreateOneOffStoryInputSchema
@@ -114,6 +119,13 @@ export interface CreateOneOffStoryDeps {
   generationRunRepository: GenerationRunRepository;
   storyRepository: StoryRepository;
   characterRepository: CharacterRepository;
+  /**
+   * M9: dispatch per-spec image jobs after the text publication commits. Optional
+   * so earlier-only tests need not supply the image stack — when absent the final
+   * dispatch stage is simply omitted (the text still publishes with pending slots).
+   */
+  illustrationRepository?: IllustrationRepository;
+  illustrationJobStarter?: IllustrationJobStarter;
 }
 
 interface FinalPayload {
@@ -672,6 +684,7 @@ export function createCreateOneOffStoryWorkflow(
         run: async (ctx: StageContext): Promise<StageResult> => {
           const { execution } = ctx;
           const input = ctx.input as CreateOneOffStoryInput;
+          const dna = (await ctx.getStageOutput("story-dna")) as StoryDna;
           const plan = await readArtifact<OneOffPlan>(execution.id, "plan");
           const final = await readArtifact<FinalPayload>(
             execution.id,
@@ -680,6 +693,12 @@ export function createCreateOneOffStoryWorkflow(
           const specsArtifact = await readArtifact<{
             illustrations: (IllustrationSpec & { afterParagraph: number })[];
           }>(execution.id, "illustration-plan");
+
+          // Every scene shares the story cast for MVP; the protagonist is prominent.
+          const subjectCharacterIds = dna.characters.map((c) => c.id);
+          const prominentCharacterId =
+            dna.characters.find((c) => c.key === plan.protagonistKey)?.id ??
+            null;
 
           const { chapterId, revisionId } =
             await storyRepository.publishOneOffChapter({
@@ -691,6 +710,7 @@ export function createCreateOneOffStoryWorkflow(
               draftParagraphs: final.draft.paragraphs,
               wordCount: countDraftWords(final.draft.paragraphs),
               schemaVersion: chapterDraftWireSchema.schemaVersion,
+              regenerate: input.regenerate,
               review: {
                 review: final.review,
                 decision: final.decision as never,
@@ -703,11 +723,31 @@ export function createCreateOneOffStoryWorkflow(
                 sceneDescription: s.sceneDescription,
                 aspect: s.aspect,
                 schemaVersion: illustrationPlanWireSchema.schemaVersion,
+                subjectCharacterIds,
+                prominentCharacterId,
               })),
             });
           return { output: { chapterId, revisionId } };
         },
       },
+
+      // 8) DISPATCH — start one image job per spec AFTER the publish committed.
+      ...(deps.illustrationRepository && deps.illustrationJobStarter
+        ? [
+            createDispatchIllustrationsStage(
+              {
+                illustrationRepository: deps.illustrationRepository,
+                illustrationJobStarter: deps.illustrationJobStarter,
+              },
+              {
+                key: "dispatch-illustrations",
+                publishStageKey: "publish",
+                storyIdOf: (ctx) =>
+                  (ctx.input as CreateOneOffStoryInput).storyId,
+              },
+            ),
+          ]
+        : []),
     ],
   };
 }

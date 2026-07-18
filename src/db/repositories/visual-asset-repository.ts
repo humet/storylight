@@ -1,4 +1,4 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 
 import type {
   ApproveCandidateSetInput,
@@ -397,6 +397,40 @@ export function createVisualAssetRepository(
             eq(characterReferenceAssets.familyId, familyId),
             // Defence in depth: only ever surface approved assets.
             eq(visualAssets.state, "approved"),
+          ),
+        )
+        .orderBy(characterReferenceAssets.position);
+
+      return rows.map((row) => ({
+        id: row.id,
+        view: row.view,
+        position: row.position,
+      }));
+    },
+
+    async getReferenceSetByProfileId(
+      familyId,
+      visualProfileId,
+    ): Promise<ReferenceAsset[]> {
+      const rows = await db
+        .select({
+          id: visualAssets.id,
+          view: characterReferenceAssets.view,
+          position: characterReferenceAssets.position,
+        })
+        .from(characterReferenceAssets)
+        .innerJoin(
+          visualAssets,
+          eq(characterReferenceAssets.assetId, visualAssets.id),
+        )
+        .where(
+          and(
+            eq(characterReferenceAssets.visualProfileId, visualProfileId),
+            eq(characterReferenceAssets.familyId, familyId),
+            // A pinned version's assets are `retired` once superseded, but a series
+            // pins a SPECIFIC version — surface its assets regardless of the current
+            // pointer, as long as they are not rejected.
+            inArray(visualAssets.state, ["approved", "retired"]),
           ),
         )
         .orderBy(characterReferenceAssets.position);

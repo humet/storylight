@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, max } from "drizzle-orm";
 
 import type {
   PublishOneOffInput,
@@ -19,11 +19,22 @@ import {
   chapterPublications,
   chapterRevisions,
   chapters,
+  illustrationPublications,
   illustrationSpecs,
   readingProgress,
   stories,
   storyPreferences,
 } from "../schema";
+
+/** Map a publication state to the reader-facing slot status (M9). */
+export function readerIllustrationStatus(
+  state: "pending" | "approved" | "manual-review" | "failed" | null,
+): "pending" | "approved" | "failed" {
+  if (state === "approved") return "approved";
+  if (state === "manual-review" || state === "failed") return "failed";
+  // No publication row yet, or still `pending` → the image is being painted.
+  return "pending";
+}
 
 /**
  * Drizzle implementation of {@link StoryRepository}. Only this layer knows the
@@ -64,13 +75,29 @@ function toStory(row: StoryRow): StoryRecord {
 
 export function createStoryRepository(db: Database): StoryRepository {
   return {
-    async createStoryIfAbsent({ id, familyId, userId, type }) {
+    async createStoryIfAbsent({ id, familyId, userId, type, generationInput }) {
       const inserted = await db
         .insert(stories)
-        .values({ id, familyId, userId, type, status: "generating" })
+        .values({
+          id,
+          familyId,
+          userId,
+          type,
+          status: "generating",
+          generationInput: generationInput ?? null,
+        })
         .onConflictDoNothing({ target: stories.id })
         .returning();
       return { created: inserted.length > 0 };
+    },
+
+    async getStoryGenerationInput(familyId, storyId) {
+      const [row] = await db
+        .select({ generationInput: stories.generationInput })
+        .from(stories)
+        .where(and(eq(stories.id, storyId), eq(stories.familyId, familyId)))
+        .limit(1);
+      return row?.generationInput ?? null;
     },
 
     async getStory(familyId, storyId) {
@@ -156,6 +183,8 @@ export function createStoryRepository(db: Database): StoryRepository {
         ),
       );
 
+      const regenerate = input.regenerate ?? false;
+
       await db.transaction(async (tx) => {
         await tx
           .insert(chapters)
@@ -167,6 +196,27 @@ export function createStoryRepository(db: Database): StoryRepository {
           })
           .onConflictDoNothing({ target: chapters.id });
 
+        // A regeneration supersedes the current accepted revision (immutable-
+        // revision rules: the prior revision is retained as `superseded`, never
+        // mutated) so the new accepted revision can take the next number.
+        let revisionNumber = 1;
+        if (regenerate) {
+          await tx
+            .update(chapterRevisions)
+            .set({ status: "superseded" })
+            .where(
+              and(
+                eq(chapterRevisions.chapterId, chapterId),
+                eq(chapterRevisions.status, "accepted"),
+              ),
+            );
+          const [maxRow] = await tx
+            .select({ value: max(chapterRevisions.revisionNumber) })
+            .from(chapterRevisions)
+            .where(eq(chapterRevisions.chapterId, chapterId));
+          revisionNumber = (maxRow?.value ?? 0) + 1;
+        }
+
         await tx
           .insert(chapterRevisions)
           .values({
@@ -174,7 +224,7 @@ export function createStoryRepository(db: Database): StoryRepository {
             chapterId,
             storyId: input.storyId,
             familyId: input.familyId,
-            revisionNumber: 1,
+            revisionNumber,
             status: "accepted",
             title: input.title,
             bodyParagraphs: input.draftParagraphs,
@@ -190,17 +240,34 @@ export function createStoryRepository(db: Database): StoryRepository {
           .set({ currentRevisionId: revisionId })
           .where(eq(chapters.id, chapterId));
 
-        await tx
-          .insert(chapterPublications)
-          .values({
-            id: publicationId,
-            chapterId,
-            storyId: input.storyId,
-            familyId: input.familyId,
-            revisionId,
-            publishedAt: now,
-          })
-          .onConflictDoNothing({ target: chapterPublications.chapterId });
+        if (regenerate) {
+          await tx
+            .insert(chapterPublications)
+            .values({
+              id: publicationId,
+              chapterId,
+              storyId: input.storyId,
+              familyId: input.familyId,
+              revisionId,
+              publishedAt: now,
+            })
+            .onConflictDoUpdate({
+              target: chapterPublications.chapterId,
+              set: { revisionId, publishedAt: now },
+            });
+        } else {
+          await tx
+            .insert(chapterPublications)
+            .values({
+              id: publicationId,
+              chapterId,
+              storyId: input.storyId,
+              familyId: input.familyId,
+              revisionId,
+              publishedAt: now,
+            })
+            .onConflictDoNothing({ target: chapterPublications.chapterId });
+        }
 
         for (let i = 0; i < input.illustrationSpecs.length; i++) {
           const s = input.illustrationSpecs[i];
@@ -219,6 +286,8 @@ export function createStoryRepository(db: Database): StoryRepository {
               sceneDescription: s.sceneDescription,
               aspect: s.aspect,
               schemaVersion: s.schemaVersion,
+              subjectCharacterIds: s.subjectCharacterIds,
+              prominentCharacterId: s.prominentCharacterId,
             })
             .onConflictDoNothing({
               target: [
@@ -283,8 +352,20 @@ export function createStoryRepository(db: Database): StoryRepository {
       if (!revision) return null;
 
       const specs = await db
-        .select()
+        .select({
+          id: illustrationSpecs.id,
+          anchorKey: illustrationSpecs.anchorKey,
+          afterParagraph: illustrationSpecs.afterParagraph,
+          caption: illustrationSpecs.caption,
+          aspect: illustrationSpecs.aspect,
+          orderIndex: illustrationSpecs.orderIndex,
+          publicationState: illustrationPublications.state,
+        })
         .from(illustrationSpecs)
+        .leftJoin(
+          illustrationPublications,
+          eq(illustrationPublications.specId, illustrationSpecs.id),
+        )
         .where(eq(illustrationSpecs.revisionId, revision.id))
         .orderBy(illustrationSpecs.orderIndex);
 
@@ -305,10 +386,12 @@ export function createStoryRepository(db: Database): StoryRepository {
         title: revision.title,
         paragraphs: revision.bodyParagraphs,
         illustrations: specs.map((s) => ({
+          specId: s.id,
           anchorKey: s.anchorKey,
           afterParagraph: s.afterParagraph,
           caption: s.caption,
           aspect: s.aspect,
+          status: readerIllustrationStatus(s.publicationState),
         })),
         progress: progress
           ? {

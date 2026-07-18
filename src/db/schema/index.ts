@@ -12,3 +12,4 @@ export * from "./model-routes";
 export * from "./generation-runs";
 export * from "./stories";
 export * from "./series";
+export * from "./illustrations";

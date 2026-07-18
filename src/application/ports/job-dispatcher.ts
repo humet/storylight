@@ -25,6 +25,15 @@ export interface DispatchOptions {
    * WDK adapter ignores it (production drives to completion).
    */
   maxStages?: number;
+  /**
+   * Scheduling hint (`docs/05-backend/background-jobs.md`: bedtime production
+   * traffic is prioritised). "interactive" = a parent is waiting on it (story/
+   * chapter workflows); "background" = fill-in work (illustration jobs). The
+   * serial in-process dispatcher lets interactive drives jump the queue of
+   * pending background drives; the WDK adapter ignores it (every drive there
+   * is independently durable). Default: "interactive".
+   */
+  priority?: "interactive" | "background";
 }
 
 export interface JobDispatcher {

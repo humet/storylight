@@ -70,11 +70,24 @@ test("a parent can create a series, read chapter 1, and continue to chapter 2", 
   // avoids racing the transient /progress URL under the fast dev fixture.
   await page.goto(overviewUrl);
   await page.getByRole("button", { name: /continue tonight/i }).click();
+  // Give the action POST time to land before any navigation can abort it.
+  await page.waitForTimeout(1500);
   await expect(async () => {
+    // Success end-state: Chapter 2 on the overview.
     await page.goto(overviewUrl);
-    await expect(
-      page.getByRole("link", { name: /chapter 2/i }).first(),
-    ).toBeVisible();
+    const chapterTwo = page.getByRole("link", { name: /chapter 2/i }).first();
+    if (await chapterTwo.isVisible().catch(() => false)) return;
+    // The submit can be lost if navigation aborted the POST — re-tap, which is
+    // safe (deterministic requestId collapses duplicates) and can never start
+    // chapter 3 because the button label pins the chapter number.
+    const continueButton = page.getByRole("button", {
+      name: /continue tonight — chapter 2/i,
+    });
+    if (await continueButton.isVisible().catch(() => false)) {
+      await continueButton.click();
+      await page.waitForTimeout(1500);
+    }
+    throw new Error("chapter 2 not published yet");
   }).toPass({ timeout: 90_000 });
 
   // Chapter 2 now appears and reads.

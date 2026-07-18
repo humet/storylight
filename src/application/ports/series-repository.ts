@@ -76,6 +76,10 @@ export interface PublishSeriesChapterInput {
     sceneDescription: string;
     aspect: "portrait" | "landscape" | "square";
     schemaVersion: string;
+    /** DB character ids of the children in this scene (drives reference selection). */
+    subjectCharacterIds: string[];
+    /** The most prominent child's DB id, if any. */
+    prominentCharacterId: string | null;
   }[];
   /** The NEW immutable snapshot (afterChapter = chapterNumber). */
   continuityState: ContinuityState;
@@ -115,10 +119,12 @@ export interface SeriesChapterReaderView {
   title: string;
   paragraphs: string[];
   illustrations: {
+    specId: string;
     anchorKey: string;
     afterParagraph: number;
     caption: string;
     aspect: "portrait" | "landscape" | "square";
+    status: "pending" | "approved" | "failed";
   }[];
   /** The gentle tomorrow promise for the NEXT chapter, if any (spoiler-free). */
   tomorrowPromise: string | null;
@@ -139,6 +145,25 @@ export interface SeriesRepository {
 
   /** The internal series context (spoiler-bearing) for a chapter workflow. */
   getSeriesContext(storyId: string): Promise<SeriesContext | null>;
+
+  /**
+   * The series' PINNED visual-profile versions (`characterId → visualProfileId`),
+   * captured at creation (rule 8). Consumed by chapter illustration jobs so a
+   * child is always rendered from the reference set pinned when the series began,
+   * never a later re-approval. Null when the story is not a series with a bible.
+   */
+  getPinnedVisualProfiles(
+    storyId: string,
+  ): Promise<Record<string, string> | null>;
+
+  /**
+   * The immutable continuity snapshot chain for a series, ordered by chapter (M9
+   * regeneration). Used to compute the LATER-chapter dependencies a chapter
+   * regeneration must preserve (`assertRegenerationPreservesDependencies`).
+   */
+  getContinuitySnapshots(
+    storyId: string,
+  ): Promise<{ afterChapterNumber: number; state: ContinuityState }[]>;
 
   /**
    * Publish a series chapter ATOMICALLY (`orchestration.md` "Publication

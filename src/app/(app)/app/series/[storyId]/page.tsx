@@ -16,10 +16,13 @@ export const dynamic = "force-dynamic";
 
 export default async function SeriesOverviewPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ storyId: string }>;
+  searchParams: Promise<{ continueError?: string }>;
 }) {
   const { storyId } = await params;
+  const { continueError } = await searchParams;
   const actor = await actorOrRedirect();
   const { queries } = await getSeriesServices();
 
@@ -92,6 +95,7 @@ export default async function SeriesOverviewPage({
         <ContinueButton
           storyId={storyId}
           chapterNumber={overview.nextChapterNumber}
+          errorMessage={continueError ?? null}
         />
       ) : null}
     </main>

@@ -10,11 +10,14 @@ import type {
 } from "./ports/story-repository";
 import {
   CreateOneOffStoryCommandSchema,
+  RegenerateChapterCommandSchema,
+  RegenerateIllustrationCommandSchema,
   SaveReadingProgressCommandSchema,
   UpdateStoryPreferencesCommandSchema,
 } from "./story-schemas";
 import type { WorkflowService } from "./workflow-service";
 import { CREATE_ONE_OFF_STORY_TYPE } from "./workflows/create-one-off-story-workflow";
+import { GENERATE_ILLUSTRATION_TYPE } from "./workflows/generate-illustration-workflow";
 
 /**
  * Story command service (`docs/05-backend/api.md` "Commands":
@@ -92,27 +95,108 @@ export function createStoryCommands(deps: StoryCommandDeps) {
         actor.userId,
         command.requestId,
       );
+      const generationInput = {
+        storyId,
+        characterIds: active.map((p) => p.id),
+        idea: command.idea,
+        theme: command.theme,
+        length: command.length,
+        tone: command.tone,
+      };
       await storyRepository.createStoryIfAbsent({
         id: storyId,
         familyId,
         userId: actor.userId,
         type: "one_off",
+        // Store the command so the story can be RE-GENERATED (M9 "Try another wording").
+        generationInput,
       });
 
       const handle = await deps.workflowService.startWorkflow(
         actor,
         CREATE_ONE_OFF_STORY_TYPE,
         command.requestId,
-        {
-          storyId,
-          characterIds: active.map((p) => p.id),
-          idea: command.idea,
-          theme: command.theme,
-          length: command.length,
-          tone: command.tone,
-        },
+        generationInput,
       );
 
+      return {
+        storyId,
+        workflowId: handle.workflowId,
+        created: handle.created,
+      };
+    },
+
+    /**
+     * Repaint ONE illustration (M9 parent action). Starts a fresh
+     * `generate-illustration` job for the spec; on its approval the prior approved
+     * illustration revision is retired and a new revision_number is minted
+     * (immutable-revision rules preserved). A random request id means each click is
+     * a distinct repaint intent (duplicate submit of the same id still dedupes).
+     */
+    async regenerateIllustration(
+      actor: AuthenticatedActor,
+      rawInput: unknown,
+    ): Promise<{ workflowId: string; created: boolean }> {
+      const { specId } = RegenerateIllustrationCommandSchema.parse(rawInput);
+      const familyId = requirePrimaryFamily(actor);
+      await authorizeFamilyAction(familyRepository, {
+        userId: actor.userId,
+        familyId,
+        capability: "story:create",
+      });
+      const handle = await deps.workflowService.startWorkflow(
+        actor,
+        GENERATE_ILLUSTRATION_TYPE,
+        `illustration-regen:${specId}:${crypto.randomUUID()}`,
+        { specId },
+      );
+      return { workflowId: handle.workflowId, created: handle.created };
+    },
+
+    /**
+     * Re-generate a ONE-OFF story's text (M9 parent action "Try another wording").
+     * Re-runs the one-off pipeline from the stored generation command and publishes
+     * a NEW accepted revision that supersedes the prior one (immutable-revision
+     * rules; revision_number increments). A one-off has no continuity chain, so
+     * there are no later-chapter dependencies to guard. Series chapters are handled
+     * by the series command (which wires `assertRegenerationPreservesDependencies`).
+     */
+    async regenerateChapter(
+      actor: AuthenticatedActor,
+      rawInput: unknown,
+    ): Promise<{ storyId: string; workflowId: string; created: boolean }> {
+      const { storyId } = RegenerateChapterCommandSchema.parse(rawInput);
+      const familyId = requirePrimaryFamily(actor);
+      await authorizeFamilyAction(familyRepository, {
+        userId: actor.userId,
+        familyId,
+        capability: "story:create",
+      });
+      const story = await storyRepository.getStory(familyId, storyId);
+      if (!story || story.status !== "published" || story.type !== "one_off") {
+        throw invalidCommandError({
+          safeMessage: "This story can't be re-written right now.",
+          internalDetail: `regenerateChapter for non-published/non-one_off story ${storyId}.`,
+          stage: "story.regenerate",
+        });
+      }
+      const stored = await storyRepository.getStoryGenerationInput(
+        familyId,
+        storyId,
+      );
+      if (!stored || typeof stored !== "object") {
+        throw invalidCommandError({
+          safeMessage: "This story can't be re-written right now.",
+          internalDetail: `No stored generation input for story ${storyId}.`,
+          stage: "story.regenerate",
+        });
+      }
+      const handle = await deps.workflowService.startWorkflow(
+        actor,
+        CREATE_ONE_OFF_STORY_TYPE,
+        `one-off-regen:${storyId}:${crypto.randomUUID()}`,
+        { ...(stored as Record<string, unknown>), regenerate: true },
+      );
       return {
         storyId,
         workflowId: handle.workflowId,

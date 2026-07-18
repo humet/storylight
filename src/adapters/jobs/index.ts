@@ -43,11 +43,19 @@ async function compose(): Promise<Composed> {
 
   let dispatcher: JobDispatcher;
   if (isDevLikeEnv(getEnv())) {
-    dispatcher = createInProcessJobDispatcher({ engine: runtime.engine });
+    // Serial: the dev/e2e PGlite is single-connection, so drives must not overlap
+    // (concurrent `db.transaction()` on one connection stalls). See the dispatcher.
+    dispatcher = createInProcessJobDispatcher({
+      engine: runtime.engine,
+      serial: true,
+    });
   } else {
     const { createWdkJobDispatcher } = await import("./wdk-dispatcher");
     dispatcher = createWdkJobDispatcher();
   }
+  // Late-bind the dispatcher so the illustration job starter (built inside the
+  // registry) can dispatch child image jobs through this same dispatcher.
+  runtime.dispatcherRef.current = dispatcher;
 
   const service = createWorkflowService({
     familyRepository: runtime.familyRepository,
