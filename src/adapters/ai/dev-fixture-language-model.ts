@@ -105,6 +105,8 @@ function draftFixture(ctx: CanonicalContext): unknown {
   );
   return {
     schemaVersion: "chapter-draft.v1",
+    // The draft title follows the plan title (which the series plan varies per
+    // chapter, below), so a series does not publish every chapter under one name.
     title: ctx.plan?.title ?? "The Lantern in the Garden",
     paragraphs,
     beatsCovered: beatKeys,
@@ -218,6 +220,25 @@ function seriesBibleFixture(ctx: CanonicalContext): unknown {
   };
 }
 
+/**
+ * Deterministic per-chapter titles so a series does not publish every chapter under
+ * the same name (cosmetic, dev-only). Keyed by the plan stage's `chapterNumber`
+ * (which the series chapter-plan canonical context carries); falls back to the first
+ * title if absent.
+ */
+const SERIES_CHAPTER_TITLES = [
+  "Into the Moonwood",
+  "The Whispering Path",
+  "A Light Among the Trees",
+  "Across the Silver Stream",
+  "The Longest Night",
+  "The Owl's Quiet Secret",
+  "Where the Path Forks",
+  "A Promise Kept",
+  "The Last Small Clue",
+  "The Lantern Comes Home",
+];
+
 /** A valid chapter plan (beats within the beat band; protagonist from the cast). */
 function chapterPlanFixture(ctx: CanonicalContext): unknown {
   const beatCount = ctx.beatTarget?.min ?? 6;
@@ -232,9 +253,11 @@ function chapterPlanFixture(ctx: CanonicalContext): unknown {
           ? `${protagonistName} settles in, cosy and hopeful for tomorrow`
           : `${protagonistName} takes another gentle, brave step`,
   }));
+  const chapterNumber = ctx.chapterNumber ?? 1;
   return {
     schemaVersion: "chapter-plan.v1",
-    title: "Into the Moonwood",
+    title:
+      SERIES_CHAPTER_TITLES[(chapterNumber - 1) % SERIES_CHAPTER_TITLES.length],
     setting: "A soft path winding into the glowing Moonwood",
     protagonistKey,
     protagonistDesire: "to follow the lantern's light a little further",

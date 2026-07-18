@@ -28,6 +28,7 @@ import {
   chapterPublications,
   chapterRevisions,
   chapters,
+  readingProgress,
   stories,
   users,
 } from "./schema";
@@ -359,6 +360,62 @@ describe("M7 one-off story pipeline", () => {
     expect(reader!.paragraphs.length).toBeGreaterThan(3);
     expect(reader!.illustrations).toHaveLength(2);
     expect(reader!.illustrations[0].anchorKey).toBe("anchor-1");
+  });
+
+  it("one-off reading progress round-trips and upserts to ONE row (per-chapter unique regression)", async () => {
+    // Regression guard for the reading_progress uniqueness change (now
+    // UNIQUE(story_id, chapter_id, user_id)): a one-off has a single chapter, so
+    // progress still behaves as one row per (story, reader) and re-saving updates
+    // rather than duplicating.
+    const user = await seedUser("m7-progress");
+    const familyId = await seedFamily(user, "Readers");
+    const characterId = await seedActiveCharacter(familyId);
+    const actor = ownerActor(user, familyId);
+    const { engine, storyCommands, storyRepository } = buildStack(
+      fixtureScript([REVIEW_CLEAN]),
+    );
+
+    const { storyId, workflowId } = await storyCommands.createOneOffStory(
+      actor,
+      baseCommand(characterId, "story-progress"),
+    );
+    await engine.runToCompletion(workflowId, { sleep: async () => {} });
+
+    // Save, then re-save with a new position — the second call must UPDATE the row.
+    await storyCommands.saveReadingProgress(actor, {
+      storyId,
+      scrollProportion: 0.25,
+      paragraphAnchor: 2,
+      completed: false,
+    });
+    await storyCommands.saveReadingProgress(actor, {
+      storyId,
+      scrollProportion: 0.8,
+      paragraphAnchor: 6,
+      completed: true,
+    });
+
+    const rows = await db
+      .select()
+      .from(readingProgress)
+      .where(
+        and(
+          eq(readingProgress.storyId, storyId),
+          eq(readingProgress.userId, user),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].chapterId).not.toBeNull();
+    expect(rows[0].paragraphAnchor).toBe(6);
+    expect(rows[0].completed).toBe(true);
+
+    const progress = await storyRepository.getReadingProgress(
+      familyId,
+      user,
+      storyId,
+    );
+    expect(progress?.paragraphAnchor).toBe(6);
+    expect(progress?.completed).toBe(true);
   });
 
   it("revision loop: revises once then approves and publishes", async () => {

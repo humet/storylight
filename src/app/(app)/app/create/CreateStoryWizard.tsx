@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button, SegmentedChoice, TextArea, cn } from "@/components";
@@ -29,6 +29,10 @@ type ChapterCount = 5 | 10;
 
 const STEP_LABELS = ["Idea", "Characters", "Format", "Choices", "Start"];
 
+// A no-op subscribe: the hydration signal never changes after the first client
+// render, so there is nothing to subscribe to.
+const subscribeNoop = () => () => {};
+
 export function CreateStoryWizard({
   characters,
 }: {
@@ -49,6 +53,17 @@ export function CreateStoryWizard({
   const [chapterCount, setChapterCount] = useState<ChapterCount>(5);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Hydration gate: every control here is client-driven (onClick handlers), so a tap
+  // BEFORE React hydrates is silently lost. Until hydrated we render the actionable
+  // controls in a visibly disabled state so a too-early tap gets feedback (a
+  // disabled affordance) instead of nothing. The picker taps were observed lost live
+  // twice pre-hydration. `useSyncExternalStore` is the lint-clean hydration signal
+  // (server snapshot false → client snapshot true after hydration).
+  const mounted = useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
 
   const canContinue = useMemo(() => {
     if (step === 0) return idea.trim().length > 0;
@@ -100,7 +115,7 @@ export function CreateStoryWizard({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-8">
+    <div className="flex flex-1 flex-col gap-8" aria-busy={!mounted}>
       <ol className="flex items-center gap-2" aria-label="Progress">
         {STEP_LABELS.map((label, index) => (
           <li key={label} className="flex flex-1 flex-col gap-1">
@@ -153,11 +168,13 @@ export function CreateStoryWizard({
                   <button
                     type="button"
                     aria-pressed={isSelected}
+                    disabled={!mounted}
                     onClick={() => toggleCharacter(character.id)}
                     className={cn(
                       "flex min-h-[var(--touch-min)] w-full flex-col gap-1 rounded-xl border p-4 text-left",
                       "transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]",
                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+                      !mounted && "cursor-progress opacity-60",
                       isSelected
                         ? "border-accent-strong bg-accent-soft"
                         : "border-border bg-surface",
@@ -199,10 +216,12 @@ export function CreateStoryWizard({
             <button
               type="button"
               aria-pressed={format === "one_off"}
+              disabled={!mounted}
               onClick={() => setFormat("one_off")}
               className={cn(
                 "rounded-xl border p-4 text-left transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+                !mounted && "cursor-progress opacity-60",
                 format === "one_off"
                   ? "border-accent-strong bg-accent-soft"
                   : "border-border bg-surface",
@@ -218,10 +237,12 @@ export function CreateStoryWizard({
             <button
               type="button"
               aria-pressed={format === "series"}
+              disabled={!mounted}
               onClick={() => setFormat("series")}
               className={cn(
                 "rounded-xl border p-4 text-left transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+                !mounted && "cursor-progress opacity-60",
                 format === "series"
                   ? "border-accent-strong bg-accent-soft"
                   : "border-border bg-surface",
@@ -286,10 +307,12 @@ export function CreateStoryWizard({
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      disabled={!mounted}
                       onClick={() => setChapterCount(count)}
                       className={cn(
                         "flex min-h-[var(--touch-min)] flex-col items-center justify-center gap-0.5 rounded-lg border px-3 py-2 text-center transition-colors",
                         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+                        !mounted && "cursor-progress opacity-60",
                         selected
                           ? "border-accent-strong bg-accent-soft text-ink"
                           : "border-border-strong bg-surface text-ink-soft",
@@ -351,7 +374,12 @@ export function CreateStoryWizard({
               {error}
             </p>
           ) : null}
-          <Button size="lg" fullWidth onClick={start} disabled={submitting}>
+          <Button
+            size="lg"
+            fullWidth
+            onClick={start}
+            disabled={!mounted || submitting}
+          >
             {submitting
               ? "Starting…"
               : format === "series"
@@ -365,14 +393,14 @@ export function CreateStoryWizard({
         <Button
           variant="ghost"
           onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={step === 0 || submitting}
+          disabled={!mounted || step === 0 || submitting}
         >
           Back
         </Button>
         {step < 4 ? (
           <Button
             onClick={() => setStep((s) => Math.min(4, s + 1))}
-            disabled={!canContinue}
+            disabled={!mounted || !canContinue}
           >
             Next
           </Button>

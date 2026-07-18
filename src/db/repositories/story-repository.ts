@@ -401,7 +401,11 @@ export function createStoryRepository(db: Database): StoryRepository {
           lastReadAt: now,
         })
         .onConflictDoUpdate({
-          target: [readingProgress.storyId, readingProgress.userId],
+          target: [
+            readingProgress.storyId,
+            readingProgress.chapterId,
+            readingProgress.userId,
+          ],
           set: {
             scrollProportion: input.scrollProportion,
             paragraphAnchor: input.paragraphAnchor,

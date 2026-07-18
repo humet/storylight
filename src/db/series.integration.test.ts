@@ -32,6 +32,7 @@ import {
   chapters,
   continuitySnapshots,
   generationRuns,
+  illustrationSpecs,
   modelRouteVersions,
   users,
 } from "./schema";
@@ -796,7 +797,24 @@ describe("M8 series pipeline", () => {
     await drive(stack.engine, workflowId);
     const context = await stack.seriesRepository.getSeriesContext(storyId);
 
-    const publishInput = (title: string, wfId: string) => ({
+    // The two writers plan DIFFERENT illustration sets with DIFFERENT anchor keys.
+    // Because illustration_specs are UNIQUE(revision_id, anchor_key) and the revision
+    // id is deterministic (shared by both writers), the loser's specs would NOT
+    // collide with the winner's — so without the author-only guard they would leak
+    // into the winner's immutable revision.
+    const spec = (anchorKey: string, caption: string) => ({
+      anchorKey,
+      afterParagraph: 1,
+      caption,
+      sceneDescription: "A scene.",
+      aspect: "landscape" as const,
+      schemaVersion: "illustration-plan.v1",
+    });
+    const publishInput = (
+      title: string,
+      wfId: string,
+      specs: ReturnType<typeof spec>[],
+    ) => ({
       familyId,
       storyId,
       workflowId: wfId,
@@ -822,17 +840,27 @@ describe("M8 series pipeline", () => {
         decision: "approve" as const,
         revisionsUsed: 0,
       },
-      illustrationSpecs: [],
+      illustrationSpecs: specs,
       continuityState: context!.latestSnapshot,
       threadStates: [],
       isFinalChapter: false,
     });
 
-    await stack.seriesRepository.publishSeriesChapter(
-      publishInput("First", "wf-1"),
+    const winnerSpecs = [
+      spec("winner-anchor-a", "Winner scene A"),
+      spec("winner-anchor-b", "Winner scene B"),
+    ];
+    const loserSpecs = [
+      spec("loser-anchor-x", "Loser scene X"),
+      spec("loser-anchor-y", "Loser scene Y"),
+      spec("loser-anchor-z", "Loser scene Z"),
+    ];
+
+    const winner = await stack.seriesRepository.publishSeriesChapter(
+      publishInput("First", "wf-1", winnerSpecs),
     );
     await stack.seriesRepository.publishSeriesChapter(
-      publishInput("Second", "wf-2"),
+      publishInput("Second", "wf-2", loserSpecs),
     );
 
     const chapter2 = await db
@@ -861,6 +889,18 @@ describe("M8 series pipeline", () => {
         ),
       );
     expect(snaps).toHaveLength(1);
+
+    // The published revision carries EXACTLY the winner's specs — the loser's specs
+    // were skipped entirely (author-only guard), so the immutable revision is clean.
+    const publishedSpecs = await db
+      .select()
+      .from(illustrationSpecs)
+      .where(eq(illustrationSpecs.revisionId, winner.revisionId))
+      .orderBy(asc(illustrationSpecs.orderIndex));
+    expect(publishedSpecs.map((s) => s.anchorKey)).toEqual([
+      "winner-anchor-a",
+      "winner-anchor-b",
+    ]);
   });
 
   it("the hidden bible and future blueprints never reach a client payload", async () => {

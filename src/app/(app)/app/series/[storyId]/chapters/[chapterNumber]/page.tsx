@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { ReaderImage, ReaderTypographyControls } from "@/components";
 import { actorOrRedirect } from "../../../../guard";
+import { ReaderProgress } from "../../../../stories/[storyId]/ReaderProgress";
 import { getSeriesServices } from "../../../service";
 
 export const metadata: Metadata = {
@@ -59,6 +60,20 @@ export default async function SeriesChapterReaderPage({
         </Link>
         <ReaderTypographyControls />
       </header>
+
+      <ReaderProgress
+        storyId={storyId}
+        totalParagraphs={reader.paragraphs.length}
+        endpoint={`/app/series/${storyId}/chapters/${reader.chapterNumber}/reading-progress`}
+        initial={
+          reader.progress
+            ? {
+                scrollProportion: reader.progress.scrollProportion,
+                paragraphAnchor: reader.progress.paragraphAnchor,
+              }
+            : null
+        }
+      />
 
       <main className="mx-auto w-full max-w-2xl px-5 py-10">
         <article

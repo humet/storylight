@@ -16,6 +16,13 @@ export interface ReaderProgressProps {
   storyId: string;
   totalParagraphs: number;
   initial: { scrollProportion: number; paragraphAnchor: number } | null;
+  /**
+   * Where to POST the progress beacon. Defaults to the one-off reading-progress
+   * route; the series chapter reader passes its own per-chapter endpoint (which
+   * injects the chapter number server-side). The beacon body is identical in both
+   * cases (scrollProportion + paragraphAnchor + completed).
+   */
+  endpoint?: string;
 }
 
 const SAVE_INTERVAL_MS = 1500;
@@ -24,6 +31,7 @@ export function ReaderProgress({
   storyId,
   totalParagraphs,
   initial,
+  endpoint,
 }: ReaderProgressProps) {
   const lastSaved = useRef(0);
   const currentAnchor = useRef(initial?.paragraphAnchor ?? 0);
@@ -71,7 +79,7 @@ export function ReaderProgress({
         paragraphAnchor: anchor,
         completed: completed.current,
       });
-      const url = `/app/stories/${storyId}/reading-progress`;
+      const url = endpoint ?? `/app/stories/${storyId}/reading-progress`;
       if (navigator.sendBeacon) {
         navigator.sendBeacon(
           url,
@@ -105,7 +113,7 @@ export function ReaderProgress({
       window.removeEventListener("pagehide", onHide);
       save(true);
     };
-  }, [storyId, totalParagraphs, initial]);
+  }, [storyId, totalParagraphs, initial, endpoint]);
 
   return null;
 }

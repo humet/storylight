@@ -254,7 +254,16 @@ export function createSeriesRepository(db: Database): SeriesRepository {
 
         // Deterministic revisionId + the partial-unique-accepted index collapse a
         // concurrent second publish of this chapter onto ONE accepted revision.
-        await tx
+        // `.returning()` tells us whether THIS transaction actually inserted the
+        // accepted revision: if the row conflicted (a racing writer — e.g. a second
+        // family member continuing the same failed run — already published this
+        // chapter), we lost the race and MUST NOT write any revision-scoped content.
+        // A published revision is an immutable revision (domain rule 5) authored by
+        // exactly ONE writer; the loser's model-authored illustration specs carry
+        // their OWN anchor keys, so without this guard they would INSERT alongside
+        // the winner's (UNIQUE(revision_id, anchor_key) does not collide) and
+        // pollute the winner's immutable revision.
+        const insertedRevision = await tx
           .insert(chapterRevisions)
           .values({
             id: revisionId,
@@ -270,7 +279,9 @@ export function createSeriesRepository(db: Database): SeriesRepository {
             planSnapshot: input.plan,
             reviewSnapshot: input.review,
           })
-          .onConflictDoNothing();
+          .onConflictDoNothing()
+          .returning({ id: chapterRevisions.id });
+        const wonRevision = insertedRevision.length > 0;
 
         await tx
           .update(chapters)
@@ -289,30 +300,35 @@ export function createSeriesRepository(db: Database): SeriesRepository {
           })
           .onConflictDoNothing({ target: chapterPublications.chapterId });
 
-        for (let i = 0; i < input.illustrationSpecs.length; i++) {
-          const s = input.illustrationSpecs[i];
-          await tx
-            .insert(illustrationSpecs)
-            .values({
-              id: specIds[i],
-              storyId: input.storyId,
-              chapterId,
-              revisionId,
-              familyId: input.familyId,
-              anchorKey: s.anchorKey,
-              orderIndex: i,
-              afterParagraph: s.afterParagraph,
-              caption: s.caption,
-              sceneDescription: s.sceneDescription,
-              aspect: s.aspect,
-              schemaVersion: s.schemaVersion,
-            })
-            .onConflictDoNothing({
-              target: [
-                illustrationSpecs.revisionId,
-                illustrationSpecs.anchorKey,
-              ],
-            });
+        // Revision-scoped writes belong to the revision's AUTHOR only. If we lost
+        // the accepted-revision race above, skip them entirely so the loser's
+        // publish is a clean no-op and cannot pollute the winner's immutable specs.
+        if (wonRevision) {
+          for (let i = 0; i < input.illustrationSpecs.length; i++) {
+            const s = input.illustrationSpecs[i];
+            await tx
+              .insert(illustrationSpecs)
+              .values({
+                id: specIds[i],
+                storyId: input.storyId,
+                chapterId,
+                revisionId,
+                familyId: input.familyId,
+                anchorKey: s.anchorKey,
+                orderIndex: i,
+                afterParagraph: s.afterParagraph,
+                caption: s.caption,
+                sceneDescription: s.sceneDescription,
+                aspect: s.aspect,
+                schemaVersion: s.schemaVersion,
+              })
+              .onConflictDoNothing({
+                target: [
+                  illustrationSpecs.revisionId,
+                  illustrationSpecs.anchorKey,
+                ],
+              });
+          }
         }
 
         // The NEW immutable snapshot (one per chapter number, unique-guarded).

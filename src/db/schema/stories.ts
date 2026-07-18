@@ -299,9 +299,19 @@ export const readingProgress = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    chapterId: uuid("chapter_id").references(() => chapters.id, {
-      onDelete: "set null",
-    }),
+    /**
+     * The chapter this progress row tracks. NOT NULL: a one-off story has exactly
+     * one chapter and a series read always targets a specific chapter, so every
+     * progress row belongs to a concrete chapter (the port types `chapterId` as
+     * required). Per-chapter granularity lets a series keep independent positions
+     * for each chapter (M8 deferred item). Cascades with the chapter (which itself
+     * cascades with the story).
+     */
+    chapterId: uuid("chapter_id")
+      .notNull()
+      .references(() => chapters.id, {
+        onDelete: "cascade",
+      }),
     /** Scroll proportion 0..1 through the reader. */
     scrollProportion: real("scroll_proportion").notNull().default(0),
     /** The paragraph anchor last in view (survives refresh). */
@@ -318,8 +328,16 @@ export const readingProgress = pgTable(
       .defaultNow(),
   },
   (table) => [
-    // One progress row per (story, reader).
-    unique("reading_progress_story_user_unq").on(table.storyId, table.userId),
+    // One progress row per (story, chapter, reader). A one-off resolves its single
+    // chapter, so this stays a single row per (story, reader) exactly as before; a
+    // series keeps an independent position per chapter. `chapter_id` is NOT NULL, so
+    // there are no NULL rows to make distinct — a plain composite unique is enough
+    // (no coalesced/partial index needed).
+    unique("reading_progress_story_chapter_user_unq").on(
+      table.storyId,
+      table.chapterId,
+      table.userId,
+    ),
     index("reading_progress_family_idx").on(table.familyId),
   ],
 );

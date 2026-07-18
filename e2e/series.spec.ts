@@ -45,8 +45,10 @@ test("a parent can create a series, read chapter 1, and continue to chapter 2", 
   await page.getByRole("button", { name: "Next", exact: true }).click(); // choices → start
   await page.getByRole("button", { name: /begin the series/i }).click();
 
-  // Progress → series overview once Chapter 1 is published.
-  await expect(page).toHaveURL(/\/app\/series\/[0-9a-f-]+\/progress/);
+  // Progress → series overview once Chapter 1 is published. The create action routes
+  // to the progress screen, but with the fast dev fixture the workflow can complete
+  // before that screen renders (it SSR-redirects to the overview when complete), so
+  // we wait for the overview URL directly rather than the transient /progress URL.
   await page.waitForURL(/\/app\/series\/[0-9a-f-]+$/, { timeout: 90_000 });
   const overviewUrl = page.url();
 
@@ -62,11 +64,18 @@ test("a parent can create a series, read chapter 1, and continue to chapter 2", 
     page.getByRole("link", { name: /close the book/i }),
   ).toBeVisible();
 
-  // Back to the overview and continue tonight → Chapter 2.
+  // Back to the overview and continue tonight → Chapter 2. The continue action starts
+  // the next-chapter workflow (durable, runs in the background) and routes to the
+  // progress screen. Poll the overview until Chapter 2 is published and shown — this
+  // avoids racing the transient /progress URL under the fast dev fixture.
   await page.goto(overviewUrl);
   await page.getByRole("button", { name: /continue tonight/i }).click();
-  await expect(page).toHaveURL(/\/app\/series\/[0-9a-f-]+\/progress/);
-  await page.waitForURL(/\/app\/series\/[0-9a-f-]+$/, { timeout: 90_000 });
+  await expect(async () => {
+    await page.goto(overviewUrl);
+    await expect(
+      page.getByRole("link", { name: /chapter 2/i }).first(),
+    ).toBeVisible();
+  }).toPass({ timeout: 90_000 });
 
   // Chapter 2 now appears and reads.
   await page
@@ -75,4 +84,61 @@ test("a parent can create a series, read chapter 1, and continue to chapter 2", 
     .click();
   await expect(page).toHaveURL(/\/chapters\/2$/);
   await expect(page.getByText(/chapter 2 of 5/i)).toBeVisible();
+
+  // --- Per-chapter reading progress (M8 wired series beacon) ---
+  const chapter1Url = `${overviewUrl}/chapters/1`;
+  const chapter2Url = `${overviewUrl}/chapters/2`;
+
+  // Force a save by signalling the page is hidden (the reader saves on visibility
+  // change), and wait for the beacon POST to be acknowledged before reloading.
+  async function forceSaveProgress() {
+    const saved = page.waitForResponse(
+      (r) =>
+        r.url().includes("/reading-progress") &&
+        r.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", {
+        value: "hidden",
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await saved;
+  }
+
+  // Read Chapter 1 mid-scroll and persist that position.
+  await page.goto(chapter1Url);
+  await expect(page.getByText(/chapter 1 of 5/i)).toBeVisible();
+  await page.evaluate(() =>
+    document.getElementById("p-10")?.scrollIntoView({ block: "start" }),
+  );
+  await page.waitForTimeout(100);
+  const ch1Scroll = await page.evaluate(() => window.scrollY);
+  expect(ch1Scroll).toBeGreaterThan(150);
+  await forceSaveProgress();
+
+  // Reload → the saved position is restored (survives refresh).
+  await page.reload();
+  await expect(page.getByText(/chapter 1 of 5/i)).toBeVisible();
+  await page.waitForTimeout(600); // allow the restore effect to run
+  const ch1Restored = await page.evaluate(() => window.scrollY);
+  expect(ch1Restored).toBeGreaterThan(150);
+
+  // Chapter 2's progress is INDEPENDENT of Chapter 1: opening it starts at the top,
+  // NOT Chapter 1's deep position. (Under the old UNIQUE(story_id, user_id) the two
+  // chapters would have shared/clobbered one row and inherited each other's scroll.)
+  await page.goto(chapter2Url);
+  await expect(page.getByText(/chapter 2 of 5/i)).toBeVisible();
+  await page.waitForTimeout(600);
+  const ch2Scroll = await page.evaluate(() => window.scrollY);
+  expect(ch2Scroll).toBeLessThan(80);
+
+  // And Chapter 1 still restores to its own deep position afterwards.
+  await page.goto(chapter1Url);
+  await expect(page.getByText(/chapter 1 of 5/i)).toBeVisible();
+  await page.waitForTimeout(600);
+  const ch1Again = await page.evaluate(() => window.scrollY);
+  expect(ch1Again).toBeGreaterThan(150);
 });

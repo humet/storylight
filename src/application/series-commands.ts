@@ -169,7 +169,14 @@ export function createSeriesCommands(deps: SeriesCommandDeps) {
       }
 
       // DETERMINISTIC requestId per (series, target chapter) — the advisory lock:
-      // concurrent taps dedupe on UNIQUE(user_id, request_id, workflow_type).
+      // concurrent taps by the SAME user dedupe on UNIQUE(user_id, request_id,
+      // workflow_type). It is intentionally NOT user-scoped in the string: the
+      // uniqueness is already per-user, so a DIFFERENT family member can legitimately
+      // start their own workflow to continue a run another member's workflow left
+      // failed. A cross-user race to publish the SAME chapter is made safe at the
+      // publish layer — `publishSeriesChapter` is first-writer-wins and the loser is
+      // a clean no-op (it writes no revision-scoped content), so it can never pollute
+      // the winner's immutable revision.
       const requestId = `series-next:${command.storyId}:${overview.nextChapterNumber}`;
       const handle = await deps.workflowService.startWorkflow(
         actor,
