@@ -8,7 +8,7 @@ Read this before starting a milestone; update it when you finish one. Milestones
 - [x] M1 — Repository foundation (Storybook, tokens/themes, env validation, domain errors, authenticated shell)
 - [x] M2 — Database and authentication boundary (Drizzle schema + migrations, Better Auth on Drizzle, family bootstrap, real actor resolution, repository ports, cross-family authz tests)
 - [x] M3 — Character narrative profiles (character tables + versioning, narrative identity schema, mobile parent editor, fictionalisation policy, relationships, profile approval)
-- [ ] M4 — Visual character profiles
+- [x] M4 — Visual character profiles (ObjectStorage port + Blob/filesystem adapters, image-model port + fake adapter, visual profile/asset/reference tables, candidate-generation service, parent approval UI, authorized approved-reference delivery)
 - [ ] M5 — Workflow engine
 - [ ] M6 — Structured AI adapters
 - [ ] M7 — One-off stories
@@ -25,33 +25,49 @@ Read this before starting a milestone; update it when you finish one. Milestones
 
 ## File map (key seams — update as they gain real code)
 
-| Path                                                      | Role                                                                                     |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/domain/`                                             | Pure types + pure functions, no IO (see folder README)                                   |
-| `src/domain/family.ts`                                    | `Family`/`FamilyMembership` domain types (DB-independent)                                |
-| `src/domain/character.ts`                                 | Character narrative-identity domain types (exact `character-system.md`)                  |
-| `src/domain/character-status.ts`                          | Pure lifecycle transition (draft→active→retired); throws on illegal                      |
-| `src/domain/character-key.ts`                             | Pure slug + app-generated semantic key composition                                       |
-| `src/application/`                                        | Command/query services, workflow coordinators — ports only                               |
-| `src/application/ports/family-repository.ts`              | `FamilyRepository` port (owned by app; DB implements)                                    |
-| `src/application/ports/character-repository.ts`           | `CharacterRepository` port (family-scoped reads/writes + versioning)                     |
-| `src/application/character-{commands,queries,schemas}.ts` | Character command/query services + Zod v4 command schemas                                |
-| `src/application/family-access.ts`                        | `authorizeFamilyAction` — membership + role capability gate                              |
-| `src/adapters/{ai,storage,jobs,auth}/`                    | ONLY place provider SDKs may be imported (ESLint-enforced)                               |
-| `src/db/schema/`                                          | Drizzle tables: Better Auth core + `families`/`family_members` + character tables        |
-| `src/db/schema/characters.ts`                             | `child_characters` / `character_profile_versions` / `character_relationships`            |
-| `src/db/repositories/character-repository.ts`             | Drizzle impl of `CharacterRepository` (family-scoped, versioned)                         |
-| `src/components/` (M3 adds)                               | `CharacterCard`, `TextArea`, `SegmentedChoice`, `ToggleField`, `StatusBadge` (+ stories) |
-| `src/app/(app)/app/characters/`                           | Mobile parent character editor (list, create/edit wizard, review+approve)                |
-| `src/db/client.ts`                                        | Single DB entry point (`getDb`); pg driver / dev PGlite fallback                         |
-| `src/db/repositories/`                                    | Drizzle implementations of application ports                                             |
-| `src/db/testing.ts`                                       | Empty-then-migrated in-memory PGlite for integration tests                               |
-| `drizzle/`                                                | Committed SQL migrations (tracked; regenerate via `pnpm db:generate`)                    |
-| `src/lib/`                                                | Env validation, typed domain errors, branded IDs (from M1)                               |
-| `src/components/`                                         | Design-system components + Storybook stories (from M1)                                   |
-| `tests/eslint-provider-boundary.test.ts`                  | Regression proof of the provider-import boundary                                         |
-| `e2e/`                                                    | Playwright suite (mobile + 320px projects)                                               |
-| `.github/workflows/ci.yml`                                | CI in the documented order; no paid provider calls                                       |
+| Path                                                                                    | Role                                                                                     |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `src/domain/`                                                                           | Pure types + pure functions, no IO (see folder README)                                   |
+| `src/domain/family.ts`                                                                  | `Family`/`FamilyMembership` domain types (DB-independent)                                |
+| `src/domain/character.ts`                                                               | Character narrative-identity domain types (exact `character-system.md`)                  |
+| `src/domain/character-status.ts`                                                        | Pure lifecycle transition (draft→active→retired); throws on illegal                      |
+| `src/domain/character-key.ts`                                                           | Pure slug + app-generated semantic key composition                                       |
+| `src/application/`                                                                      | Command/query services, workflow coordinators — ports only                               |
+| `src/application/ports/family-repository.ts`                                            | `FamilyRepository` port (owned by app; DB implements)                                    |
+| `src/application/ports/character-repository.ts`                                         | `CharacterRepository` port (family-scoped reads/writes + versioning)                     |
+| `src/application/character-{commands,queries,schemas}.ts`                               | Character command/query services + Zod v4 command schemas                                |
+| `src/application/family-access.ts`                                                      | `authorizeFamilyAction` — membership + role capability gate                              |
+| `src/adapters/{ai,storage,jobs,auth}/`                                                  | ONLY place provider SDKs may be imported (ESLint-enforced)                               |
+| `src/db/schema/`                                                                        | Drizzle tables: Better Auth core + `families`/`family_members` + character tables        |
+| `src/db/schema/characters.ts`                                                           | `child_characters` / `character_profile_versions` / `character_relationships`            |
+| `src/db/repositories/character-repository.ts`                                           | Drizzle impl of `CharacterRepository` (family-scoped, versioned)                         |
+| `src/domain/visual-asset.ts` / `visual-asset-state.ts`                                  | Visual-identity types + pure asset-state transitions (`isDeliverable`)                   |
+| `src/domain/reference-view.ts`                                                          | Canonical reference views + pure `orderByReferenceView` (identity-first)                 |
+| `src/domain/storage-keys.ts`                                                            | Pure private-key builder (exact scheme + path-traversal guard)                           |
+| `src/domain/character-visual-descriptor.ts`                                             | Pure model-neutral descriptor from a character profile                                   |
+| `src/domain/image-validation.ts`                                                        | Pure MIME + decode validation before any upload                                          |
+| `src/application/ports/object-storage.ts`                                               | `ObjectStorage` port (private put/read/head/delete, optional signed URL)                 |
+| `src/application/ports/image-model.ts`                                                  | `ImageModel` port (model-neutral spec → bytes + lineage)                                 |
+| `src/application/ports/visual-asset-repository.ts`                                      | `VisualAssetRepository` port (family+character-scoped, atomic approval)                  |
+| `src/application/visual-character-service.ts`                                           | Candidate-generation + approve/reject + authorized delivery service                      |
+| `src/adapters/storage/{object-storage,filesystem-,vercel-blob-}.ts`                     | ObjectStorage factory + dev filesystem adapter + Vercel Blob adapter                     |
+| `src/adapters/images/{index,fake-image-model}.ts`                                       | ImageModel factory + deterministic fake SVG placeholder adapter                          |
+| `src/db/schema/visual-assets.ts`                                                        | `visual_profiles` / `visual_assets` / `character_reference_assets` (+ 2 enums)           |
+| `src/db/repositories/visual-asset-repository.ts`                                        | Drizzle impl of `VisualAssetRepository`                                                  |
+| `src/app/(app)/app/characters/[characterId]/appearance/`                                | Mobile parent approval UI (request candidates, grid, approve/discard)                    |
+| `src/app/(app)/app/characters/[characterId]/{references,candidates}/[assetId]/route.ts` | Authorized asset delivery (approved / quarantined only)                                  |
+| `src/components/ReferenceAssetFrame.tsx`                                                | Aspect-reserved image frame (no layout shift) + stories                                  |
+| `src/components/` (M3 adds)                                                             | `CharacterCard`, `TextArea`, `SegmentedChoice`, `ToggleField`, `StatusBadge` (+ stories) |
+| `src/app/(app)/app/characters/`                                                         | Mobile parent character editor (list, create/edit wizard, review+approve)                |
+| `src/db/client.ts`                                                                      | Single DB entry point (`getDb`); pg driver / dev PGlite fallback                         |
+| `src/db/repositories/`                                                                  | Drizzle implementations of application ports                                             |
+| `src/db/testing.ts`                                                                     | Empty-then-migrated in-memory PGlite for integration tests                               |
+| `drizzle/`                                                                              | Committed SQL migrations (tracked; regenerate via `pnpm db:generate`)                    |
+| `src/lib/`                                                                              | Env validation, typed domain errors, branded IDs (from M1)                               |
+| `src/components/`                                                                       | Design-system components + Storybook stories (from M1)                                   |
+| `tests/eslint-provider-boundary.test.ts`                                                | Regression proof of the provider-import boundary                                         |
+| `e2e/`                                                                                  | Playwright suite (mobile + 320px projects)                                               |
+| `.github/workflows/ci.yml`                                                              | CI in the documented order; no paid provider calls                                       |
 
 ## Decision log (mid-build choices not worth a full ADR)
 
@@ -76,10 +92,17 @@ Read this before starting a milestone; update it when you finish one. Milestones
 
 - 2026-07-18 (M3 verify): one-off e2e failure observed immediately after a build wiped dev state (11/12), not reproducible across 4 subsequent runs including from a fresh `.pglite`. Suspected first-boot migration race between parallel Playwright workers on the dev PGlite. Watch item: if it recurs, serialize first-boot migration or give e2e a dedicated pre-migrated database.
 
+- 2026-07-18 (M4): **Fake image adapter only.** No `AI_GATEWAY_API_KEY` here and the AI SDK arrives in M6, so the `ImageModel` port has ONE adapter: a deterministic FAKE model (`src/adapters/images/fake-image-model.ts`) that renders labelled placeholder **SVG** bytes locally (no `sharp`, no network, no paid call). Chosen SVG-bytes over SVG→PNG-via-sharp because a small local abstraction suffices (AGENTS.md: don't add a dep when unnecessary) and it removes a native-binary CI risk. The real reference-capable gateway adapter lands in M6/M9 behind the same port; `getImageModel()` mirrors the DB client's selection shape. Seeds are masked to 31 bits so they fit Postgres `integer`.
+- 2026-07-18 (M4): **ObjectStorage port, two adapters, DB-client-style selection.** `getObjectStorage()` picks Vercel Blob (private, `access:"private"`, `@vercel/blob` imported ONLY in `src/adapters/storage/**`) when `BLOB_READ_WRITE_TOKEN` is set, else a dev/test filesystem adapter rooted at `.storage/` (gitignored) when `isDevLikeEnv`, else hard-errors — exactly mirroring `src/db/client.ts` (blob imported dynamically to stay out of bundles). The Blob adapter is contract-typed against `@vercel/blob@2.6.1` but NOT live-tested here (no token); every test uses the filesystem adapter (DI: `createFilesystemObjectStorage(tmpDir)`). Key scheme is the exact `families/{familyId}/characters/{characterId}/profiles/{version}/{assetId}`, built by a pure traversal-guarded `buildVisualAssetKey`; raw keys never reach clients.
+- 2026-07-18 (M4): **Candidate generation is a plain synchronous application service** (`createVisualCharacterService`) — the fake adapter is fast. No queue/workflow tables (those are M5). The service is dependency-injected over the family/character/visual-asset repos + ObjectStorage + ImageModel ports; its shape (request → generate → upload → record; approve/reject) is ready to move onto the M5 JobDispatcher without changing callers. `requestCandidateSets` generates N sets × 6 views, validates MIME+decode, checksums (Web Crypto SHA-256), uploads PRIVATE, records **quarantined**.
+- 2026-07-18 (M4): **Approval / versioning.** `approveCandidateSet` is one repo transaction: mark the chosen set's assets `approved`, **reject the character's other quarantined sets** (superseded alternatives), mint the next immutable `visual_profiles` version (`UNIQUE(character_id, version)`), insert the ordered `character_reference_assets` (`UNIQUE(visual_profile_id, view)`, order = `orderByReferenceView`, front-portrait first), and repoint `child_characters.visual_profile_id`. Asset-state moves are the pure `applyVisualAssetTransition` (only `quarantined → approved`); re-approving a fresh set mints v2. Series pinning of a specific visual version is deferred to M8/M9 (`docs/03-ai/image-generation.md` "Story visual profile").
+- 2026-07-18 (M4): **Delivery: two authorized routes, state-filtered in the service.** `/app/characters/[id]/references/[assetId]` streams ONLY `approved` assets (capability `story:read`); `/app/characters/[id]/candidates/[assetId]` streams ONLY `quarantined` candidates (capability `character:manage`). Both go through `resolveDeliverableAsset`, which authorises, loads the family+character-scoped asset, and enforces the allowed-state filter — so **rejected/retired assets are unreachable from every path** and cross-family reads return null (proven by integration tests + the M4 e2e). Responses are `private, no-store`, `nosniff`, and CSP-sandboxed (SVG safety); no permanent/signed URL is stored. `scale-comparison` view deferred (no scale-reference object exists yet); AVIF/WebP derivatives deferred to M9 (its build list owns "derivatives") — SVG placeholders are tiny.
+
 ## Deviations from docs
 
 If code must diverge from `docs/`, record the conflict here and propose an ADR/doc correction — do not silently invent a third design (`CLAUDE.md` "Source of truth").
 
 - 2026-07-18 (M3): `docs/02-storytelling/character-system.md` types `CharacterProfile.visualProfileId: string` (required). Visual profiles are M4, so no visual profile exists to reference at character-creation time in M3. Resolution: the domain type and the DB column are nullable (`visualProfileId: string | null`, `visual_profile_id text` with no FK yet) and always `null` on create/edit in M3; M4 will populate it and can add the FK. Proposed doc correction: annotate the interface field as nullable-until-visual-profile-approved. No third design invented.
+- 2026-07-18 (M4): **`visualProfileId` moved from the immutable version row to the mutable character identity row.** M3 placed `visual_profile_id` on `character_profile_versions` (a forward-pointer placeholder, always null). But visual-profile approval is a LIFECYCLE change that must NOT mint a narrative version, and versions are immutable revisions (domain rule 5) — so the pointer cannot live on, or mutate, a version row. Resolution: M4 adds `child_characters.visual_profile_id` (nullable `uuid` FK → `visual_profiles(id)`, `on delete set null`; circular FK resolved exactly like `current_version_id`) as the AUTHORITATIVE current-approved-profile pointer; `CharacterProfile.visualProfileId` now maps from the character row. The M3 `character_profile_versions.visual_profile_id` column is retained (harmless, stays null) rather than dropped, to avoid churn on committed migrations. Proposed doc correction: `character-system.md` should locate the visual-profile pointer on the character identity, not the narrative version. No third design invented; no production data exists yet.
 - 2026-07-18 (M2): `docs/05-backend/database.md` says migrations "never run implicitly from application startup". The **dev/test-only** PGlite fallback (`src/db/dev-pglite.ts`, used only when `DATABASE_URL` is absent and `NODE_ENV !== production`) self-migrates a file-backed `.pglite/dev` on first `getDb()` so the dev server and Playwright run offline with zero setup. This respects the rule's intent: the real Postgres path (`pg`) NEVER auto-migrates — production migrates via the explicit `pnpm db:migrate` step, and `client.ts` hard-errors if `DATABASE_URL` is missing in production. No doc change proposed; the rule targets production, which is honoured.
 - 2026-07-18 (M1): `docs/04-frontend/app-architecture.md` sketches the app home at `(app)/page.tsx` (i.e. `/`) while also defining a `(marketing)/` group — two route groups cannot both own `/`. Current resolution: `/` = marketing landing, `/app` = authenticated home, `/sign-in` + `/sign-up` = auth. Proposed doc correction: annotate the route sketch so `(app)` pages live under `/app`. Revisit if the marketing surface is dropped (private family app may not need one), which would return the app home to `/`.

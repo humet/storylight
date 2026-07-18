@@ -17,6 +17,7 @@ import type {
   NarrativeIdentity,
 } from "@/domain/character";
 import { families } from "./families";
+import { visualProfiles } from "./visual-assets";
 
 /**
  * Character narrative-profile tables (`docs/02-storytelling/character-system.md`,
@@ -65,6 +66,17 @@ export const childCharacters = pgTable(
       // Circular FK (character ↔ version): nullable + set-null on delete so the
       // character can be inserted before its first version exists.
       (): AnyPgColumn => characterProfileVersions.id,
+      { onDelete: "set null" },
+    ),
+    /**
+     * The character's CURRENT approved visual profile version (M4). Circular FK
+     * with `visual_profiles.character_id` — nullable + set-null on delete so the
+     * character exists before any visual profile does, exactly like
+     * `current_version_id`. Approving a visual profile repoints this (a lifecycle
+     * change on the mutable identity row, never a narrative-version mint).
+     */
+    visualProfileId: uuid("visual_profile_id").references(
+      (): AnyPgColumn => visualProfiles.id,
       { onDelete: "set null" },
     ),
     createdAt: timestamp("created_at", { withTimezone: true })

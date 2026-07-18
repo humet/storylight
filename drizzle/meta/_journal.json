@@ -15,6 +15,13 @@
       "when": 1784366332979,
       "tag": "0001_melodic_the_professor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784368328528,
+      "tag": "0002_slim_sentinels",
+      "breakpoints": true
     }
   ]
 }

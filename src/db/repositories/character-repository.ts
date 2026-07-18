@@ -41,7 +41,11 @@ function toProfile(
     status: character.status,
     narrativeIdentity: version.narrativeIdentity,
     fictionalisationPolicy: version.fictionalisationPolicy,
-    visualProfileId: version.visualProfileId,
+    // The approved visual profile is a lifecycle pointer on the character
+    // identity row (M4), not part of an immutable narrative version. The M3
+    // `character_profile_versions.visual_profile_id` column is retained but no
+    // longer authoritative (BUILD_STATE deviation).
+    visualProfileId: character.visualProfileId,
     version: version.version,
     createdAt: character.createdAt,
     approvedAt: character.approvedAt ?? undefined,

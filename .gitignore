@@ -42,6 +42,9 @@ yarn-error.log*
 # local dev database (file-backed PGlite fallback; dev/test only)
 /.pglite/
 
+# local dev object storage (filesystem ObjectStorage fallback; dev/test only)
+/.storage/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

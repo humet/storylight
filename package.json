@@ -25,6 +25,7 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
+    "@vercel/blob": "^2.6.1",
     "better-auth": "^1.6.23",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.10",

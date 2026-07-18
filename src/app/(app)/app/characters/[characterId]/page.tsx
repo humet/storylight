@@ -94,6 +94,15 @@ export default async function CharacterDetailPage({
             </Button>
           </form>
           <Link
+            href={`/app/characters/${profile.id}/appearance`}
+            className={buttonClassName({
+              variant: "secondary",
+              fullWidth: true,
+            })}
+          >
+            {profile.visualProfileId ? "Change their look" : "Paint their look"}
+          </Link>
+          <Link
             href={`/app/characters/${profile.id}/edit`}
             className={buttonClassName({
               variant: "secondary",
@@ -105,6 +114,12 @@ export default async function CharacterDetailPage({
         </section>
       ) : (
         <section className="flex flex-col gap-3">
+          <Link
+            href={`/app/characters/${profile.id}/appearance`}
+            className={buttonClassName({ fullWidth: true })}
+          >
+            {profile.visualProfileId ? "Change their look" : "Paint their look"}
+          </Link>
           <Link
             href={`/app/characters/${profile.id}/edit`}
             className={buttonClassName({

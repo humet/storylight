@@ -135,3 +135,22 @@ export function invalidCommandError(
     ...init,
   });
 }
+
+/**
+ * Convenience constructor for a failed generation/processing step (e.g. an image
+ * candidate that could not be produced or validated). The safe message stays
+ * calm and actionable (`docs/company/writing-style.md`); provider details live
+ * only in `internalDetail`.
+ */
+export function generationFailedError(
+  init: Partial<Omit<DomainErrorInit, "code">> = {},
+): DomainError {
+  return new DomainError({
+    code: "GENERATION_FAILED",
+    safeMessage:
+      init.safeMessage ??
+      "That did not come together properly. Nothing was saved, and you can try again.",
+    retryable: init.retryable ?? true,
+    ...init,
+  });
+}

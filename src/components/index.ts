@@ -12,6 +12,8 @@ export { StatusBadge } from "./StatusBadge";
 export type { StatusBadgeProps, CharacterStatusValue } from "./StatusBadge";
 export { CharacterCard } from "./CharacterCard";
 export type { CharacterCardProps } from "./CharacterCard";
+export { ReferenceAssetFrame } from "./ReferenceAssetFrame";
+export type { ReferenceAssetFrameProps } from "./ReferenceAssetFrame";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
 export { ErrorState } from "./ErrorState";
