@@ -28,7 +28,26 @@ export type Database = NodePgDatabase<typeof schema>;
 
 export { schema };
 
-let cached: Promise<Database> | undefined;
+/**
+ * The memoised database, cached on `globalThis` under a PROCESS-GLOBAL symbol
+ * (`Symbol.for`) rather than a module-scoped `let`.
+ *
+ * WHY: in Next.js dev/build the bundler can instantiate this module more than
+ * once (a route handler and a page can land in separate server bundles), and a
+ * module-scoped cache would then create ONE `Database` PER BUNDLE. For the real
+ * `pg` pool that is merely wasteful, but for the dev/test file-backed PGlite it
+ * is a correctness bug: two PGlite handles over the same data directory hold
+ * DIVERGENT in-memory state, so a write through one is invisible to the other
+ * (e.g. an approval on one handle, a delivery read on the other). Keying the
+ * cache on `globalThis` collapses every bundle copy onto ONE instance — the
+ * standard Next.js singleton pattern. Tests build their own DB via `./testing`
+ * and never touch this path.
+ */
+const DB_CACHE_KEY = Symbol.for("storylight.db.instance");
+
+type DbGlobal = typeof globalThis & {
+  [DB_CACHE_KEY]?: Promise<Database>;
+};
 
 async function create(): Promise<Database> {
   const env = getEnv();
@@ -54,6 +73,7 @@ async function create(): Promise<Database> {
 
 /** Lazily build (and memoise) the Drizzle database for the current process. */
 export function getDb(): Promise<Database> {
-  cached ??= create();
-  return cached;
+  const store = globalThis as DbGlobal;
+  store[DB_CACHE_KEY] ??= create();
+  return store[DB_CACHE_KEY];
 }

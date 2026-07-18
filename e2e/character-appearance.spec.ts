@@ -36,10 +36,12 @@ test("a parent paints and approves a character reference set", async ({
   await expect(page).toHaveURL(/\/app\/characters\/[0-9a-f-]+\/appearance$/);
   await page.getByRole("button", { name: /paint rosa/i }).click();
 
-  // Candidate options appear; approve the first one.
+  // Painting now runs as a durable workflow (M5): a progress state shows, then
+  // the page polls and refreshes when the candidates are ready. Give the
+  // background drive + poll a little longer than the default assertion timeout.
   await expect(
     page.getByRole("heading", { name: /choose rosa.s look/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Option 1" })).toBeVisible();
   await page
     .getByRole("button", { name: /use this look/i })

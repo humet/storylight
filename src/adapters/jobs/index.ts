@@ -1,0 +1,86 @@
+import "server-only";
+
+import type { JobDispatcher } from "@/application/ports/job-dispatcher";
+import {
+  createWorkflowService,
+  type WorkflowService,
+} from "@/application/workflow-service";
+import { getEnv, isDevLikeEnv } from "@/lib/env";
+import {
+  createInProcessJobDispatcher,
+  type InProcessJobDispatcher,
+} from "./in-process-dispatcher";
+import {
+  createWorkflowRuntime,
+  type WorkflowRuntime,
+} from "./workflow-runtime";
+
+/**
+ * Server-only composition root for the workflow engine (mirrors `getDb()` /
+ * `getObjectStorage()` selection). ONE runtime + dispatcher per process is
+ * memoised so an in-process background drive keeps running across requests and
+ * `settled()` remains meaningful.
+ *
+ * Dispatcher selection (like the DB/storage drivers, ADR-006):
+ *  - dev/test → the in-process dispatcher drives the shared engine (durable
+ *    enough for a long-lived `next dev` / Playwright process, and the honest
+ *    thing to exercise offline);
+ *  - otherwise → the Vercel Workflow (WDK) dispatcher (durable across deploys),
+ *    dynamically imported so the `workflow` package never enters the dev/test/
+ *    build graph.
+ */
+
+interface Composed {
+  runtime: WorkflowRuntime;
+  dispatcher: JobDispatcher;
+  service: WorkflowService;
+}
+
+let cached: Promise<Composed> | undefined;
+
+async function compose(): Promise<Composed> {
+  const runtime = await createWorkflowRuntime();
+
+  let dispatcher: JobDispatcher;
+  if (isDevLikeEnv(getEnv())) {
+    dispatcher = createInProcessJobDispatcher({ engine: runtime.engine });
+  } else {
+    const { createWdkJobDispatcher } = await import("./wdk-dispatcher");
+    dispatcher = createWdkJobDispatcher();
+  }
+
+  const service = createWorkflowService({
+    familyRepository: runtime.familyRepository,
+    workflowRepository: runtime.workflowRepository,
+    registry: runtime.registry,
+    dispatcher,
+  });
+
+  return { runtime, dispatcher, service };
+}
+
+function composed(): Promise<Composed> {
+  cached ??= compose();
+  return cached;
+}
+
+/** The workflow command/query service (start/status/cancel/resume). */
+export async function getWorkflowService(): Promise<WorkflowService> {
+  return (await composed()).service;
+}
+
+/** The selected dispatcher (rarely needed directly outside composition). */
+export async function getJobDispatcher(): Promise<JobDispatcher> {
+  return (await composed()).dispatcher;
+}
+
+/**
+ * Await all in-flight in-process drives. A no-op under the WDK dispatcher (its
+ * durability is external). Useful for graceful shutdown and dev tooling.
+ */
+export async function settleInProcessDrives(): Promise<void> {
+  const { dispatcher } = await composed();
+  if ("settled" in dispatcher) {
+    await (dispatcher as InProcessJobDispatcher).settled();
+  }
+}

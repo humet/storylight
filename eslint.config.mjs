@@ -16,9 +16,19 @@ const providerImportPatterns = [
   "@vercel/blob/*",
   "better-auth",
   "better-auth/*",
-  "workflow",
-  "workflow/*",
 ];
+
+// The Vercel Workflow DevKit (`workflow` package) is matched by an ANCHORED
+// regex rather than a gitignore-style group: a bare `workflow` group would also
+// catch internal modules whose basename is `workflow` (e.g. `@/domain/workflow`,
+// `./workflow`). `^workflow(/.*)?$` matches only the real package and its
+// subpaths (`workflow`, `workflow/api`, `workflow/next`), so the WDK adapter is
+// still fenced to src/adapters/ without colliding with domain module names.
+const workflowPackageRestriction = {
+  regex: "^workflow(/.*)?$",
+  message:
+    "The Vercel Workflow (WDK) package may only be imported inside src/adapters/ (domain rule 12). Depend on the JobDispatcher port instead.",
+};
 
 // Database driver + ORM packages may only be imported inside src/db/** (the
 // single DB entry point, schema, migrations, repositories) and src/adapters/**
@@ -60,7 +70,13 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": [
         "error",
-        { patterns: [providerRestriction, databaseRestriction] },
+        {
+          patterns: [
+            providerRestriction,
+            workflowPackageRestriction,
+            databaseRestriction,
+          ],
+        },
       ],
     },
   },
@@ -68,7 +84,10 @@ const eslintConfig = defineConfig([
     // The DB layer may use Drizzle/drivers, but never a provider SDK.
     files: ["src/db/**/*.{ts,tsx}"],
     rules: {
-      "no-restricted-imports": ["error", { patterns: [providerRestriction] }],
+      "no-restricted-imports": [
+        "error",
+        { patterns: [providerRestriction, workflowPackageRestriction] },
+      ],
     },
   }, // Override default ignores of eslint-config-next.
   globalIgnores([
