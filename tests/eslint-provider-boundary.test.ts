@@ -39,4 +39,60 @@ describe("provider SDK import boundary", () => {
     );
     expect(errors).toHaveLength(0);
   });
+
+  it("rejects provider imports inside src/db (db is not an adapter)", async () => {
+    const errors = await boundaryErrors(
+      'import { betterAuth } from "better-auth";',
+      "src/db/fixture.ts",
+    );
+    expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+// M2: Drizzle/DB drivers may only be imported inside src/db/** and
+// src/adapters/** (ADR-005/006). Everything else depends on a repository port.
+const databaseImports = [
+  'import { drizzle } from "drizzle-orm/node-postgres";',
+  'import { eq } from "drizzle-orm";',
+  'import { Pool } from "pg";',
+  'import { PGlite } from "@electric-sql/pglite";',
+];
+
+describe("database driver import boundary", () => {
+  it.each(databaseImports)("rejects %s in src/domain", async (statement) => {
+    const errors = await boundaryErrors(statement, "src/domain/fixture.ts");
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it.each(databaseImports)(
+    "rejects %s in src/application",
+    async (statement) => {
+      const errors = await boundaryErrors(
+        statement,
+        "src/application/fixture.ts",
+      );
+      expect(errors.length).toBeGreaterThan(0);
+    },
+  );
+
+  it("rejects DB drivers in React components", async () => {
+    const errors = await boundaryErrors(
+      'import { Pool } from "pg";',
+      "src/components/fixture.tsx",
+    );
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it.each(databaseImports)("allows %s inside src/db", async (statement) => {
+    const errors = await boundaryErrors(statement, "src/db/fixture.ts");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("allows DB drivers inside src/adapters", async () => {
+    const errors = await boundaryErrors(
+      'import { drizzle } from "drizzle-orm/node-postgres";',
+      "src/adapters/auth/fixture.ts",
+    );
+    expect(errors).toHaveLength(0);
+  });
 });

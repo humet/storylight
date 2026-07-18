@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// Full credential vertical slice: sign up -> HTTP-only session cookie ->
-// requireActor() resolves the actor -> the authenticated shell renders. The M1
-// store is the in-memory adapter, so a unique email per run avoids collisions
-// between Playwright projects sharing one dev-server process.
+// Full credential vertical slice: sign up -> family bootstrap + HTTP-only
+// session cookie -> requireActor() resolves the actor from family_members ->
+// the authenticated shell renders. Persistence is now the Drizzle adapter over
+// the dev PGlite fallback (M2), which is file-backed and survives across runs,
+// so a unique email per run avoids collisions with earlier data.
 test("signing up creates a session and reaches the app shell", async ({
   page,
 }, testInfo) => {

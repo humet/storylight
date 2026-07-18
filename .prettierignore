@@ -4,3 +4,6 @@ pnpm-lock.yaml
 public
 docs
 CLAUDE.md
+# drizzle-kit generated migration artifacts (leave as the tool emits them)
+drizzle
+storybook-static

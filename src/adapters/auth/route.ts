@@ -12,17 +12,17 @@ import { getAuth } from "./auth";
  * on first request, never at import time, so `pnpm build` (no env vars) never
  * instantiates the auth provider.
  */
-let cachedHandlers: ReturnType<typeof toNextJsHandler> | undefined;
+let cachedHandlers: Promise<ReturnType<typeof toNextJsHandler>> | undefined;
 
-function handlers(): ReturnType<typeof toNextJsHandler> {
-  cachedHandlers ??= toNextJsHandler(getAuth());
+async function handlers(): Promise<ReturnType<typeof toNextJsHandler>> {
+  cachedHandlers ??= getAuth().then((auth) => toNextJsHandler(auth));
   return cachedHandlers;
 }
 
-export function GET(request: Request): Promise<Response> {
-  return handlers().GET(request);
+export async function GET(request: Request): Promise<Response> {
+  return (await handlers()).GET(request);
 }
 
-export function POST(request: Request): Promise<Response> {
-  return handlers().POST(request);
+export async function POST(request: Request): Promise<Response> {
+  return (await handlers()).POST(request);
 }

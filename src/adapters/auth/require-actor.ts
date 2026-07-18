@@ -2,7 +2,9 @@ import "server-only";
 
 import { headers } from "next/headers";
 
-import type { AuthenticatedActor } from "@/domain/actor";
+import { getDb } from "@/db/client";
+import { createFamilyRepository } from "@/db/repositories/family-repository";
+import type { AuthenticatedActor, Role } from "@/domain/actor";
 import { unauthorisedError } from "@/lib/errors";
 import { getAuth } from "./auth";
 
@@ -11,22 +13,31 @@ import { getAuth } from "./auth";
  * boundary (`docs/05-backend/auth.md`). Identity is always resolved
  * server-side from the HTTP-only session cookie.
  *
- * M1 mapping note: role and family membership are not persisted until M2, so a
- * signed-in user is treated as the `owner` of their (future) family with an
- * empty `familyIds`. When the Drizzle-backed membership tables land in M2 this
- * mapping reads real rows; the return TYPE does not change.
+ * M2: `familyIds` and `roles` are now READ from `family_members` (the M1
+ * placeholder that synthesised `["owner"]` / `[]` is gone). `familyIds` is the
+ * distinct set of families the user belongs to; `roles` is the union of the
+ * roles they hold across those families — the flat shape the fixed interface
+ * requires. Per-family enforcement ("may this user do X in THIS family?") is
+ * `authorizeFamilyAction` in the application layer, not this flat list.
  */
 async function resolveActor(): Promise<AuthenticatedActor | null> {
-  const session = await getAuth().api.getSession({
+  const auth = await getAuth();
+  const session = await auth.api.getSession({
     headers: await headers(),
   });
 
   if (!session?.user) return null;
 
+  const repository = createFamilyRepository(await getDb());
+  const memberships = await repository.listMembershipsForUser(session.user.id);
+
+  const familyIds = [...new Set(memberships.map((m) => m.familyId))];
+  const roles = [...new Set(memberships.map((m) => m.role))] as Role[];
+
   return {
     userId: session.user.id,
-    familyIds: [],
-    roles: ["owner"],
+    familyIds,
+    roles,
   };
 }
 

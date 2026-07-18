@@ -39,6 +39,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local dev database (file-backed PGlite fallback; dev/test only)
+/.pglite/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

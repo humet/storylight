@@ -47,7 +47,8 @@ function toDomainError(cause: unknown, stage: string): DomainError {
 
 export async function signUpWithPassword(input: SignUpInput): Promise<void> {
   try {
-    await getAuth().api.signUpEmail({
+    const auth = await getAuth();
+    await auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
       headers: await headers(),
     });
@@ -60,7 +61,8 @@ export async function signInWithPassword(
   input: EmailPasswordCredentials,
 ): Promise<void> {
   try {
-    await getAuth().api.signInEmail({
+    const auth = await getAuth();
+    await auth.api.signInEmail({
       body: { email: input.email, password: input.password },
       headers: await headers(),
     });
@@ -70,5 +72,6 @@ export async function signInWithPassword(
 }
 
 export async function signOutCurrentSession(): Promise<void> {
-  await getAuth().api.signOut({ headers: await headers() });
+  const auth = await getAuth();
+  await auth.api.signOut({ headers: await headers() });
 }

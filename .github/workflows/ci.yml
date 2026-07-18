@@ -39,7 +39,19 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Migration validation
-        # Placeholder until Drizzle migrations arrive in Milestone 2:
-        # will run migrations against a clean Postgres and check drift.
-        run: pnpm db:migrate
+      - name: Migration validation (empty PGlite + drift check)
+        # No live Postgres in CI: migrations are applied to an EMPTY in-process
+        # PGlite (real Postgres semantics, no network). `pnpm db:migrate`
+        # (drizzle-kit against DATABASE_URL) is the production path only.
+        run: |
+          # 1. Migrations apply cleanly from an empty database.
+          pnpm db:validate
+          # 2. Committed migration files are internally consistent.
+          pnpm db:check
+          # 3. No schema drift: regenerating must not produce a new migration.
+          pnpm db:generate
+          if [ -n "$(git status --porcelain -- drizzle)" ]; then
+            echo "Schema drift: run 'pnpm db:generate' and commit the migration."
+            git status --porcelain -- drizzle
+            exit 1
+          fi

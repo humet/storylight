@@ -18,6 +18,8 @@ export default defineConfig({
           alias: {
             // `server-only` throws outside an RSC environment.
             "server-only": path.join(dirname, "tests/stubs/server-only.ts"),
+            // Mirror the tsconfig `@/*` -> `src/*` path alias.
+            "@": path.join(dirname, "src"),
           },
         },
         test: {

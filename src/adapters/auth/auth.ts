@@ -1,9 +1,11 @@
 import "server-only";
 
 import { betterAuth } from "better-auth";
-import { memoryAdapter, type MemoryDB } from "better-auth/adapters/memory";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 
+import { getDb, schema } from "@/db/client";
+import { createFamilyRepository } from "@/db/repositories/family-repository";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -11,17 +13,20 @@ import { getEnv } from "@/lib/env";
  * (domain rule 12, ESLint-enforced). Everything outside `src/adapters/auth/`
  * depends on the `AuthenticatedActor` boundary, never on Better Auth types.
  *
- * M1 caveats (Postgres + Drizzle arrive in M2, ADR-006):
- *  - Persistence is the in-memory adapter: accounts live for the lifetime of a
- *    single server process. A dev-server restart (or a fresh serverless
- *    instance) empties the store. This is intentional for the M1 shell and is
- *    replaced by the Drizzle adapter in M2.
- *  - Roles and family membership are not yet stored, so `requireActor()`
- *    synthesises them (see `require-actor.ts`).
+ * Persistence (M2): the Drizzle adapter over the single `src/db` entry point
+ * (Postgres in prod/preview, dev PGlite fallback offline). The Better Auth core
+ * tables live in `src/db/schema/auth.ts` and are handed to the adapter below;
+ * `usePlural: true` matches Better Auth's singular model names (`user`) to our
+ * plural table exports (`users`).
  *
- * Instantiation is LAZY: `betterAuth()` is only ever called on first request,
- * never at import time, so `pnpm build`/CI (which run with no env vars) never
- * touch it. See `src/lib/env.ts` for the same lazy-validation contract.
+ * Sign-up family bootstrap: `databaseHooks.user.create.after` creates the new
+ * user's family and their `owner` membership in one transaction, so every user
+ * has at least one family (`docs/05-backend/auth.md`). Roles/families are then
+ * read back by `require-actor.ts`.
+ *
+ * Instantiation is LAZY and async: `betterAuth()` is only ever built on first
+ * request (after `getDb()` resolves), never at import time, so `pnpm build`/CI
+ * (no env vars) never touch it. See `src/lib/env.ts` for the same contract.
  */
 
 const DEV_FALLBACK_SECRET =
@@ -45,37 +50,53 @@ function resolveSecret(): string {
   return DEV_FALLBACK_SECRET;
 }
 
-// Process-lifetime in-memory store. Shared across the singleton auth instance.
-// The memory adapter requires each model's table to exist as an array up front
-// (it throws "Model <x> not found" otherwise); these are Better Auth's core
-// email+password models. Replaced by the Drizzle schema in M2.
-const memoryStore: MemoryDB = {
-  user: [],
-  session: [],
-  account: [],
-  verification: [],
-};
+/** A sensible default family name from the signing-up user's display name. */
+function defaultFamilyName(userName: string | undefined | null): string {
+  const trimmed = userName?.trim();
+  if (!trimmed) return "Your family";
+  return `${trimmed}'s family`;
+}
 
 /**
- * Build the Better Auth instance. Kept as a factory so its precise inferred
- * type flows through `getAuth()` — annotating with the generic `Auth` widens
- * the options and breaks assignment.
+ * Build the Better Auth instance. Kept as a factory so its precise inferred type
+ * flows through `getAuth()` — annotating with the generic `Auth` widens the
+ * options and breaks assignment.
  */
-function createAuth() {
+async function createAuth() {
   const env = getEnv();
+  const db = await getDb();
 
   return betterAuth({
-    // In-memory persistence for M1 (see caveats above).
-    database: memoryAdapter(memoryStore),
+    // Postgres/Drizzle persistence (ADR-005/006). Schema keys are plural.
+    database: drizzleAdapter(db, {
+      provider: "pg",
+      schema,
+      usePlural: true,
+    }),
     secret: resolveSecret(),
     // Infer the base URL from request headers when not explicitly configured
     // (keeps the dev server booting with zero env vars).
     ...(env.BETTER_AUTH_URL ? { baseURL: env.BETTER_AUTH_URL } : {}),
     emailAndPassword: {
       enabled: true,
-      // No email delivery yet (M1) — accounts are usable immediately.
+      // No email delivery yet — accounts are usable immediately.
       requireEmailVerification: false,
       minPasswordLength: 8,
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // Bootstrap a family + owner membership atomically after sign-up, so
+          // every user always has at least one family to work in.
+          after: async (user) => {
+            const repository = createFamilyRepository(await getDb());
+            await repository.createFamilyWithOwner({
+              userId: user.id,
+              familyName: defaultFamilyName(user.name),
+            });
+          },
+        },
+      },
     },
     session: {
       // Sensible expiry per docs/05-backend/auth.md.
@@ -96,12 +117,12 @@ function createAuth() {
   });
 }
 
-type AuthInstance = ReturnType<typeof createAuth>;
+type AuthInstance = Awaited<ReturnType<typeof createAuth>>;
 
-let cachedAuth: AuthInstance | undefined;
+let cachedAuth: Promise<AuthInstance> | undefined;
 
 /** Lazily build (and memoise) the Better Auth instance. */
-export function getAuth(): AuthInstance {
+export function getAuth(): Promise<AuthInstance> {
   cachedAuth ??= createAuth();
   return cachedAuth;
 }
