@@ -47,6 +47,8 @@ function fakeRegistry(
     lifecycleStatus: "active",
     evaluationProfile: null,
     approvalRecord: null,
+    isCanary: false,
+    canaryRule: null,
   };
   return {
     async getLanguageRoute() {

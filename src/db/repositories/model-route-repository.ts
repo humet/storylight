@@ -26,6 +26,8 @@ function toRoute(row: Row): ModelRouteVersion {
       row.lifecycleStatus as ModelRouteVersion["lifecycleStatus"],
     evaluationProfile: row.evaluationProfile ?? null,
     approvalRecord: row.approvalRecord ?? null,
+    isCanary: row.isCanary,
+    canaryRule: row.canaryRule ?? null,
   };
 }
 

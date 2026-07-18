@@ -13,3 +13,5 @@ export * from "./generation-runs";
 export * from "./stories";
 export * from "./series";
 export * from "./illustrations";
+export * from "./evaluation";
+export * from "./deletion";

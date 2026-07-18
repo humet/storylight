@@ -366,6 +366,134 @@ describe("retries and dead-lettering", () => {
   });
 });
 
+describe("M10 closed debt — durable back-off + matrix-derived cancel/requeue", () => {
+  it("does NOT claim a parked-for-retry row before next_attempt_at (durable gate)", async () => {
+    const user = await seedUser("backoff-owner");
+    const familyId = await seedFamily(user, "Backoff");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "backoff-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    // A drive claims (takes the lease) then parks the row for retry with a
+    // back-off 30s in the future (as the engine's recordRetry does).
+    const base = new Date("2026-07-18T00:00:00.000Z");
+    const nextAttemptAt = new Date(base.getTime() + 30_000);
+    await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "drive-A",
+      leaseMs: 60_000,
+      now: base,
+    });
+    await repo.recordRetry({
+      workflowId: execution.id,
+      leaseOwner: "drive-A",
+      attempt: 1,
+      error: {
+        code: "GENERATION_FAILED",
+        message: "transient",
+        retryable: true,
+        occurredAt: base.toISOString(),
+      },
+      nextStatus: "waiting",
+      nextAttemptAt,
+      now: base,
+    });
+
+    // A DIFFERENT dispatcher tries to claim BEFORE the back-off elapses — blocked
+    // at the DB level (this is the fix: previously it could re-drive immediately).
+    const early = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "other-dispatcher",
+      leaseMs: 60_000,
+      now: new Date(base.getTime() + 10_000),
+    });
+    expect(early).toBeNull();
+
+    // Once next_attempt_at is due, the claim succeeds.
+    const due = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "other-dispatcher",
+      leaseMs: 60_000,
+      now: nextAttemptAt,
+    });
+    expect(due).not.toBeNull();
+    expect(due?.leaseOwner).toBe("other-dispatcher");
+  });
+
+  it("cancel works from a RUNNING (leased) row per the matrix, and a live drive cannot then advance", async () => {
+    const user = await seedUser("cancel-owner");
+    const familyId = await seedFamily(user, "Cancellers");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "cancel-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    // A drive claims → running + live lease.
+    const claimed = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "drive-A",
+      leaseMs: 60_000,
+    });
+    expect(claimed?.status).toBe("running");
+
+    // Cancel now legally applies from `running` (the matrix has running--cancel-->
+    // cancelled; the old SQL guard wrongly excluded it).
+    const cancelled = await repo.cancel(familyId, execution.id);
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.leaseOwner).toBeUndefined();
+
+    // The in-flight drive's advance is a no-op (its lease was cleared) — no
+    // resurrection of a cancelled workflow.
+    await repo.advanceStage({
+      workflowId: execution.id,
+      leaseOwner: "drive-A",
+      nextStage: SYNTHETIC_STAGE_KEYS[1],
+      nextStatus: "waiting",
+    });
+    const after = await repo.getExecutionById(execution.id);
+    expect(after?.status).toBe("cancelled");
+  });
+
+  it("requeue only resumes a failed row and cross-family reads are rejected", async () => {
+    const user = await seedUser("requeue-owner");
+    const familyId = await seedFamily(user, "Requeuers");
+    const otherUser = await seedUser("requeue-intruder");
+    const otherFamily = await seedFamily(otherUser, "Others");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "requeue-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    // A queued (not failed) row cannot be requeued (no `resume` edge from queued).
+    expect(await repo.requeue(familyId, execution.id)).toBeNull();
+
+    // Move it to failed, then requeue succeeds — but never cross-family.
+    await db
+      .update(workflowExecutions)
+      .set({ status: "failed" })
+      .where(eq(workflowExecutions.id, execution.id));
+    expect(await repo.requeue(otherFamily, execution.id)).toBeNull();
+    const requeued = await repo.requeue(familyId, execution.id);
+    expect(requeued?.status).toBe("queued");
+  });
+});
+
 describe("concurrency guard (lease)", () => {
   it("prevents a second drive from running the same stage while leased", async () => {
     const user = await seedUser("lease-owner");

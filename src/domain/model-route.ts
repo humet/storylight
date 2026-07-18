@@ -52,6 +52,19 @@ export interface ApprovalRecord {
   evaluationRunId?: string;
 }
 
+/**
+ * A CANARY rollout rule (`docs/03-ai/evaluation.md` "Shadow and canary",
+ * `docs/06-engineering/deployment.md` "Feature flags"). A canary route applies
+ * only to NEWLY created stories/series; the chosen arm is then PINNED per series
+ * (M8 pinning), so existing series never drift. `rolloutPercent` is the share of
+ * NEW stories routed to the canary (0–100); the assignment is a pure,
+ * deterministic hash of the story/series key (see `resolveRolloutRoute`).
+ */
+export interface CanaryRule {
+  rolloutPercent: number;
+  note?: string;
+}
+
 export interface ModelRouteVersion {
   /** App-generated id (never model-generated). */
   id: string;
@@ -68,6 +81,51 @@ export interface ModelRouteVersion {
   evaluationProfile: string | null;
   /** Approval record; null until the route is approved. */
   approvalRecord: ApprovalRecord | null;
+  /** Whether this is the capability's active CANARY (vs the baseline). */
+  isCanary: boolean;
+  /** Rollout rule when `isCanary`; null otherwise. */
+  canaryRule: CanaryRule | null;
+}
+
+/** Which arm a new story was routed to (recorded/pinned per series). */
+export type RolloutArm = "baseline" | "canary";
+
+/**
+ * Deterministic 0–99 bucket for a story/series key (FNV-1a hash). Pure — the same
+ * key always lands in the same bucket, so a canary assignment is stable if it were
+ * ever recomputed, and the pin is the source of truth thereafter.
+ */
+export function rolloutBucket(key: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % 100;
+}
+
+/**
+ * Choose the route for a NEWLY created story/series. When a canary exists for the
+ * capability, its `rolloutPercent` share of new-story keys is routed to it; the
+ * rest (and the case with no canary) use the baseline. This is called ONLY at
+ * creation time — the result is pinned into the series, so an existing series is
+ * never re-routed (the new-only rule).
+ */
+export function resolveRolloutRoute(input: {
+  storyKey: string;
+  baseline: ModelRouteVersion;
+  canary?: ModelRouteVersion | null;
+}): { route: ModelRouteVersion; arm: RolloutArm } {
+  const { storyKey, baseline, canary } = input;
+  if (
+    canary &&
+    canary.isCanary &&
+    canary.canaryRule &&
+    rolloutBucket(storyKey) < canary.canaryRule.rolloutPercent
+  ) {
+    return { route: canary, arm: "canary" };
+  }
+  return { route: baseline, arm: "baseline" };
 }
 
 /**

@@ -30,6 +30,16 @@ export const familyRole = pgEnum("family_role", ["owner", "parent", "viewer"]);
 export const families = pgTable("families", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 120 }).notNull(),
+  /**
+   * TOMBSTONE marker (M10 deletion workflow, `docs/05-backend/database.md`
+   * "Deletion"). Set when the family has been deleted: all private child content
+   * is removed and the `name` is anonymised, but the tenancy-root row is retained
+   * as an auditable, idempotency-anchoring tombstone (the deletion workflow's own
+   * `workflow_executions` row references this family, so cascading the row away
+   * mid-run would break the engine). Reader/delivery access is revoked by removing
+   * `family_members`, so a deleted family is unreachable regardless.
+   */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

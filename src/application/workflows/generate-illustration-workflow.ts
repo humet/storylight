@@ -37,6 +37,12 @@ import {
 } from "@/domain/reference-selection";
 import { buildIllustrationAssetKey } from "@/domain/storage-keys";
 import type { ImageCapability } from "@/domain/model-capability";
+import {
+  consumeImageCall,
+  EMPTY_LEDGER,
+  imageCallBreach,
+  type WorkflowBudget,
+} from "@/domain/workflow-budget";
 import { DomainError, generationFailedError } from "@/lib/errors";
 
 /**
@@ -60,6 +66,21 @@ import { DomainError, generationFailedError } from "@/lib/errors";
  */
 
 export const GENERATE_ILLUSTRATION_TYPE = "generate-illustration";
+
+/**
+ * Per-image-job budget (`docs/06-engineering/cost-management.md`). The generation
+ * ladder is `initial → repair → escalation` (3 phases), so `maximumImageCalls` is
+ * 3; the paint loop cross-checks the structural cap against this budget so the two
+ * can never drift. Vision reviews are bounded 1:1 with generations by the loop.
+ */
+const IMAGE_JOB_BUDGET: WorkflowBudget = {
+  maximumTextCalls: 0,
+  maximumImageCalls: IMAGE_PHASES.length,
+  maximumOutputTokens: 0,
+  // Premium escalation (900) + a repair (350) + an initial (350) ≈ 1600; leave
+  // headroom so the ceiling bounds a runaway, not the sanctioned ladder.
+  maximumEstimatedCostMinorUnits: 3_000,
+};
 
 export const GenerateIllustrationInputSchema = z.object({
   specId: z.uuid(),
@@ -260,7 +281,19 @@ export function createGenerateIllustrationWorkflow(
             verdict: null,
           };
 
+          // The per-job IMAGE budget is the explicit authority over the generation
+          // ladder (M10): the structural `IMAGE_PHASES` cap is now cross-checked
+          // against `maximumImageCalls`, so extending the ladder can never quietly
+          // exceed the budget. The ledger accrues the flat per-image cost too.
+          let imageLedger = EMPTY_LEDGER;
+
           for (const phase of IMAGE_PHASES) {
+            if (imageCallBreach(imageLedger, IMAGE_JOB_BUDGET)) {
+              // Budget exhausted before this attempt — stop the ladder safely and
+              // fall through to the manual/failed handling below.
+              result = { ...result, decision: "failed" };
+              break;
+            }
             const genRoute = imageRouteRegistry.resolveGeneration(phase);
             const request = buildImageSceneRequest({
               spec: { scene: job.sceneDescription, aspect },
@@ -367,6 +400,11 @@ export function createGenerateIllustrationWorkflow(
               estimatedCostMinorUnits: genRoute.costMinorUnitsPerImage,
               latencyMs: Date.now() - startedAt,
             });
+            // Count this generation (+ its flat cost) against the image budget.
+            imageLedger = consumeImageCall(
+              imageLedger,
+              genRoute.costMinorUnitsPerImage,
+            );
 
             // VISION REVIEW → structured verdict → app-code policy.
             const reviewRoute = imageRouteRegistry.resolveReview();

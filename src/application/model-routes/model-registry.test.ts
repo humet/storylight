@@ -17,6 +17,8 @@ function route(overrides: Partial<ModelRouteVersion> = {}): ModelRouteVersion {
     lifecycleStatus: "active",
     evaluationProfile: null,
     approvalRecord: null,
+    isCanary: false,
+    canaryRule: null,
     ...overrides,
   };
 }

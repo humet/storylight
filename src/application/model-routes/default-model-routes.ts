@@ -1,5 +1,9 @@
 import type { LanguageCapability } from "@/domain/model-capability";
 import type { ModelRouteVersion } from "@/domain/model-route";
+import {
+  BASELINE_FIXTURE_SET_ID,
+  BASELINE_REPORT_ID,
+} from "../evaluation/baseline-evaluation";
 
 /**
  * The SEEDED, source-controlled DEFAULT ROUTE SET (`docs/03-ai/models.md`
@@ -14,19 +18,25 @@ import type { ModelRouteVersion } from "@/domain/model-route";
  * gateway model list at implementation time) — never mutable `latest` aliases;
  * the resolved provider id is recorded per run. Fallbacks are availability-only.
  *
- * BOOTSTRAP CAVEAT: `docs/03-ai/models.md` requires the evaluation gate before a
- * route goes `active`. That gate is M10. These rows are seeded `active` with a
- * clearly-marked BOOTSTRAP approval record so M6's pipeline is exercisable; M10
- * replaces the approval with a real evaluation approval. Recorded in BUILD_STATE.
+ * EVALUATION GATE (M10): `docs/03-ai/models.md` requires the evaluation gate
+ * before a route goes `active`. M6 seeded these `active` with a bootstrap
+ * approval; M10 REPLACES that with a real evaluation approval referencing the
+ * `local-fake` baseline report (`baseline-evaluation.ts`, mirrored by the seed
+ * migration's UPDATE + the `evaluation_approvals` rows). This module reflects the
+ * END state `getActiveRoute` returns; `RouteLifecycleService` enforces the gate on
+ * any future activation.
  */
 
-const BOOTSTRAP_APPROVED_AT = "2026-07-18T00:00:00.000Z";
+const APPROVED_AT = "2026-07-18T00:00:00.000Z";
 
-function bootstrapApproval(): NonNullable<ModelRouteVersion["approvalRecord"]> {
+function evaluationApproval(): NonNullable<
+  ModelRouteVersion["approvalRecord"]
+> {
   return {
-    approvedBy: "system:m6-seed",
-    approvedAt: BOOTSTRAP_APPROVED_AT,
-    note: "M6 bootstrap seed — pending the M10 evaluation gate.",
+    approvedBy: "system:m10-evaluation",
+    approvedAt: APPROVED_AT,
+    note: "Superseded by M10 evaluation approval (local-fake baseline).",
+    evaluationRunId: BASELINE_REPORT_ID,
   };
 }
 
@@ -133,6 +143,8 @@ export const DEFAULT_MODEL_ROUTES: ModelRouteVersion[] = SEEDS.map((seed) => ({
     maxOutputTokens: seed.maxOutputTokens,
   },
   lifecycleStatus: "active",
-  evaluationProfile: null,
-  approvalRecord: bootstrapApproval(),
+  evaluationProfile: BASELINE_FIXTURE_SET_ID,
+  approvalRecord: evaluationApproval(),
+  isCanary: false,
+  canaryRule: null,
 }));

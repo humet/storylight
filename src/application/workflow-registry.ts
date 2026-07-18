@@ -1,9 +1,11 @@
 import type { StructuredGenerator } from "./ai/generate-structured";
+import type { LanguageModel } from "./ports/language-model";
 import type { CharacterRepository } from "./ports/character-repository";
 import type { GenerationRunRepository } from "./ports/generation-run-repository";
 import type { ModelRouteRepository } from "./ports/model-route-repository";
 import type { SeriesRepository } from "./ports/series-repository";
 import type { StoryRepository } from "./ports/story-repository";
+import type { FamilyDeletionRepository } from "./ports/family-deletion-repository";
 import type { ChapterImageModel } from "./ports/chapter-image-model";
 import type { ImageDerivatives } from "./ports/image-derivatives";
 import type { ImageGenerationRunRepository } from "./ports/image-generation-run-repository";
@@ -24,6 +26,8 @@ import { createCreateSeriesWorkflow } from "./workflows/create-series-workflow";
 import { createGenerateNextChapterWorkflow } from "./workflows/generate-next-chapter-workflow";
 import { createGenerateIllustrationWorkflow } from "./workflows/generate-illustration-workflow";
 import { createGenerateCharacterCandidatesWorkflow } from "./workflows/generate-character-candidates-workflow";
+import { createDeleteFamilyWorkflow } from "./workflows/delete-family-workflow";
+import { createRunCapabilityProbeWorkflow } from "./workflows/run-capability-probe-workflow";
 import { createStructuredPlanDemoWorkflow } from "./workflows/structured-plan-demo-workflow";
 import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflow";
 
@@ -66,6 +70,17 @@ export interface WorkflowRegistryDeps {
   imageDerivatives?: ImageDerivatives;
   imageRunRepository?: ImageGenerationRunRepository;
   imageRouteRegistry?: ImageRouteRegistry;
+  /**
+   * M10 family-deletion workflow dependencies. Optional so earlier-only tests need
+   * not supply them; the `delete-family` workflow registers only when the deletion
+   * repository AND object storage are present.
+   */
+  familyDeletionRepository?: FamilyDeletionRepository;
+  /**
+   * M10 capability-probe workflow deps. The `run-capability-probe` workflow
+   * registers only when the route repository AND a language model are present.
+   */
+  languageModel?: LanguageModel;
 }
 
 export function createWorkflowRegistry(
@@ -90,6 +105,32 @@ export function createWorkflowRegistry(
       }),
     ),
   ];
+
+  // M10: the auditable family-deletion workflow. Registered only when its
+  // deletion repository and object storage are supplied.
+  if (deps.familyDeletionRepository && deps.objectStorage) {
+    definitions.push(
+      asWorkflowDefinition(
+        createDeleteFamilyWorkflow({
+          familyDeletionRepository: deps.familyDeletionRepository,
+          objectStorage: deps.objectStorage,
+        }),
+      ),
+    );
+  }
+
+  // M10: the capability-probe health check. Registered when the route repository
+  // and a language model are supplied.
+  if (deps.modelRouteRepository && deps.languageModel) {
+    definitions.push(
+      asWorkflowDefinition(
+        createRunCapabilityProbeWorkflow({
+          modelRouteRepository: deps.modelRouteRepository,
+          languageModel: deps.languageModel,
+        }),
+      ),
+    );
+  }
 
   // M7: the first end-to-end user-facing pipeline — a one-off story. Registered
   // only when its persistence dependencies are supplied.

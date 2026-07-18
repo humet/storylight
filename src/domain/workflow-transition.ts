@@ -1,5 +1,6 @@
 import { DomainError } from "@/lib/errors";
 import type { WorkflowEvent, WorkflowStatus } from "./workflow";
+import { WORKFLOW_STATUSES } from "./workflow";
 
 /**
  * The workflow state-transition matrix, as a pure, total function
@@ -74,4 +75,42 @@ export function canTransition(
   event: WorkflowEvent,
 ): boolean {
   return MATRIX[from][event] !== undefined;
+}
+
+/**
+ * The guarded transition an operator-facing command applies for `event`: the set
+ * of source statuses the event is legal FROM, and the single status it moves TO,
+ * both DERIVED FROM {@link MATRIX} — never re-encoded in a SQL guard. The Drizzle
+ * repository's `cancel`/`requeue` call this so the matrix stays the single source
+ * of truth (closing the M5 debt: the adjacency lived twice, once here and once as
+ * `status IN (...)` guards, a drift risk if the matrix changed).
+ *
+ * Throws if `event` maps to more than one distinct target status — such an event
+ * cannot be applied by a single guarded `UPDATE ... SET status = <target>`; it
+ * would need per-source branching, and none of the operator events (`cancel`,
+ * `resume`) are like that. Engine-internal events (`claim`/`yield`/…) are applied
+ * by the engine with a known `from`, not through this helper.
+ */
+export function guardedTransitionFor(event: WorkflowEvent): {
+  fromStatuses: WorkflowStatus[];
+  toStatus: WorkflowStatus;
+} {
+  const fromStatuses: WorkflowStatus[] = [];
+  const targets = new Set<WorkflowStatus>();
+  for (const from of WORKFLOW_STATUSES) {
+    const to = MATRIX[from][event];
+    if (to !== undefined) {
+      fromStatuses.push(from);
+      targets.add(to);
+    }
+  }
+  if (targets.size !== 1) {
+    throw new DomainError({
+      code: "INVALID_COMMAND",
+      safeMessage: "This action is not available right now.",
+      internalDetail: `Event "${event}" is not a single-target guarded transition (targets: ${[...targets].join(", ") || "none"}).`,
+      stage: "workflow.transition",
+    });
+  }
+  return { fromStatuses, toStatus: [...targets][0] };
 }

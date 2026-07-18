@@ -33,6 +33,7 @@ import { createIllustrationRepository } from "@/db/repositories/illustration-rep
 import { createModelRouteRepository } from "@/db/repositories/model-route-repository";
 import { createSeriesRepository } from "@/db/repositories/series-repository";
 import { createStoryRepository } from "@/db/repositories/story-repository";
+import { createFamilyDeletionRepository } from "@/db/repositories/family-deletion-repository";
 import { createVisualAssetRepository } from "@/db/repositories/visual-asset-repository";
 import { createWorkflowRepository } from "@/db/repositories/workflow-repository";
 
@@ -80,9 +81,10 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
   // M6 structured-generation stack (capability routing → pipeline → run records).
   const modelRouteRepository = createModelRouteRepository(db);
   const modelRegistry = createModelRegistry(modelRouteRepository);
+  const languageModel = getLanguageModel();
   const structuredGenerator = createStructuredGenerator({
     modelRegistry,
-    languageModel: getLanguageModel(),
+    languageModel,
     pricing: createModelPricing(),
   });
   const generationRunRepository = createGenerationRunRepository(db);
@@ -142,6 +144,8 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
     imageDerivatives: getImageDerivatives(),
     imageRunRepository,
     imageRouteRegistry,
+    familyDeletionRepository: createFamilyDeletionRepository(db),
+    languageModel,
   });
   const engine = createWorkflowEngine({ repo: workflowRepository, registry });
 

@@ -29,8 +29,11 @@ describe("default model routes", () => {
         expect(slug).not.toContain("latest");
       }
       expect(route.settings.maxOutputTokens).toBeGreaterThan(0);
-      // A bootstrap approval record is present (real evaluation approval is M10).
-      expect(route.approvalRecord?.approvedBy).toBe("system:m6-seed");
+      // The M10 evaluation approval (superseding M6's bootstrap) references the
+      // local-fake baseline report.
+      expect(route.approvalRecord?.approvedBy).toBe("system:m10-evaluation");
+      expect(route.approvalRecord?.evaluationRunId).toBeTruthy();
+      expect(route.evaluationProfile).toBe("storylight-core");
     }
   });
 

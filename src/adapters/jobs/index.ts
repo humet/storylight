@@ -5,6 +5,7 @@ import {
   createWorkflowService,
   type WorkflowService,
 } from "@/application/workflow-service";
+import { createConsoleObservabilityEmitter } from "@/adapters/observability/console-emitter";
 import { getEnv, isDevLikeEnv } from "@/lib/env";
 import {
   createInProcessJobDispatcher,
@@ -62,6 +63,7 @@ async function compose(): Promise<Composed> {
     workflowRepository: runtime.workflowRepository,
     registry: runtime.registry,
     dispatcher,
+    emitter: createConsoleObservabilityEmitter(),
   });
 
   return { runtime, dispatcher, service };

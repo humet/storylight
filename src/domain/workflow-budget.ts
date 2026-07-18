@@ -70,3 +70,38 @@ export function consumeTextCall(
       ledger.estimatedCostMinorUnits + estimatedCostMinorUnits,
   };
 }
+
+/** Why a prospective IMAGE (generation) call would breach the budget. */
+export type ImageBudgetBreach = "image-calls" | "estimated-cost" | null;
+
+/**
+ * Whether starting ONE more image GENERATION call is allowed (M10 — the image
+ * pipeline previously bounded itself only by the fixed phase count; the budget is
+ * now the explicit authority across BOTH pipelines, so a change to the phase
+ * ladder can never quietly exceed the per-job image budget). Checked before each
+ * generation attempt; the cost ceiling is checked against what has ALREADY been
+ * spent (a flat per-image cost cannot be pre-priced beyond the call ceiling).
+ */
+export function imageCallBreach(
+  ledger: BudgetLedger,
+  budget: WorkflowBudget,
+): ImageBudgetBreach {
+  if (ledger.imageCalls >= budget.maximumImageCalls) return "image-calls";
+  if (ledger.estimatedCostMinorUnits >= budget.maximumEstimatedCostMinorUnits) {
+    return "estimated-cost";
+  }
+  return null;
+}
+
+/** Record a completed image (generation) call + its flat cost (pure). */
+export function consumeImageCall(
+  ledger: BudgetLedger,
+  estimatedCostMinorUnits: number,
+): BudgetLedger {
+  return {
+    ...ledger,
+    imageCalls: ledger.imageCalls + 1,
+    estimatedCostMinorUnits:
+      ledger.estimatedCostMinorUnits + estimatedCostMinorUnits,
+  };
+}

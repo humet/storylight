@@ -5,11 +5,16 @@ import type {
   WorkflowHandle,
   WorkflowStatus,
 } from "@/domain/workflow";
+import { buildEvent } from "@/domain/observability";
 import { invalidCommandError, unauthorisedError } from "@/lib/errors";
 import type { SafeErrorCode } from "@/lib/errors";
 import { authorizeFamilyAction } from "./family-access";
 import type { JobDispatcher } from "./ports/job-dispatcher";
 import type { FamilyRepository } from "./ports/family-repository";
+import {
+  noopEmitter,
+  type ObservabilityEmitter,
+} from "./ports/observability-emitter";
 import type { WorkflowRepository } from "./ports/workflow-repository";
 import type { WorkflowRegistry } from "./workflow-engine";
 
@@ -35,6 +40,8 @@ export interface WorkflowServiceDeps {
   workflowRepository: WorkflowRepository;
   registry: WorkflowRegistry;
   dispatcher: JobDispatcher;
+  /** Structured observability sink (`observability.md`). Defaults to no-op. */
+  emitter?: ObservabilityEmitter;
 }
 
 /** Client-safe view of a workflow's progress (`docs/05-backend/api.md`). */
@@ -64,6 +71,7 @@ function requirePrimaryFamily(actor: AuthenticatedActor): string {
 
 export function createWorkflowService(deps: WorkflowServiceDeps) {
   const { familyRepository, workflowRepository, registry, dispatcher } = deps;
+  const emitter = deps.emitter ?? noopEmitter;
 
   function definitionFor(type: string) {
     const def = registry[type];
@@ -153,10 +161,26 @@ export function createWorkflowService(deps: WorkflowServiceDeps) {
       // Dispatch on first creation. (A duplicate submission of an in-flight run
       // does not need another dispatch; a resumed/failed run is re-driven via
       // resumeWorkflow.)
-      if (created)
+      if (created) {
+        // Correlation ids on the command (`observability.md` "Correlation"): a
+        // failed bedtime generation is diagnosable by these ids alone, and the
+        // event carries NO prose/prompt/profile — only ids + a safe type.
+        emitter.emit(
+          buildEvent({
+            event: "workflow.created",
+            correlation: {
+              requestId,
+              workflowId: execution.id,
+              familyId,
+              storyId: entityId,
+            },
+            issue: type,
+          }),
+        );
         await dispatcher.dispatch(execution.id, {
           priority: def.dispatchPriority,
         });
+      }
 
       return {
         workflowId: execution.id,

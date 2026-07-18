@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import type {
   AdvanceStageInput,
@@ -11,6 +11,7 @@ import type {
   WorkflowRepository,
 } from "@/application/ports/workflow-repository";
 import type { WorkflowError, WorkflowExecution } from "@/domain/workflow";
+import { guardedTransitionFor } from "@/domain/workflow-transition";
 import type { Database } from "../client";
 import { workflowExecutions, workflowStageOutputs } from "../schema";
 
@@ -173,9 +174,14 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
     async claim(input: ClaimInput) {
       const now = input.now ?? new Date();
       const leaseExpiresAt = new Date(now.getTime() + input.leaseMs);
-      // Claimable when: queued/waiting (no live lease), OR running with an
-      // EXPIRED lease (visibility timeout — the previous drive crashed). A
-      // running workflow with a live lease matches neither branch → null (locked).
+      // Claimable when: queued/waiting AND the retry back-off has elapsed (no
+      // `next_attempt_at`, or it is due), OR running with an EXPIRED lease
+      // (visibility timeout — the previous drive crashed). A running workflow with
+      // a live lease matches neither branch → null (locked). The `next_attempt_at`
+      // gate is a DB-level guard (closing the M5 debt): a `waiting` row parked for
+      // a scheduled retry can no longer be re-driven before its back-off by a
+      // different dispatcher or a WDK replay — the durable schedule is honoured in
+      // the database, not only by the driving loop's in-memory sleep.
       const rows = await db
         .update(workflowExecutions)
         .set({
@@ -189,7 +195,13 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
           and(
             eq(workflowExecutions.id, input.workflowId),
             or(
-              inArray(workflowExecutions.status, ["queued", "waiting"]),
+              and(
+                inArray(workflowExecutions.status, ["queued", "waiting"]),
+                or(
+                  isNull(workflowExecutions.nextAttemptAt),
+                  lte(workflowExecutions.nextAttemptAt, now),
+                ),
+              ),
               and(
                 eq(workflowExecutions.status, "running"),
                 lt(workflowExecutions.leaseExpiresAt, now),
@@ -318,10 +330,13 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
 
     async cancel(familyId, workflowId) {
       const now = new Date();
+      // Source set + target derived from the pure state machine (the matrix is the
+      // single source of truth — no re-encoded `status IN (...)` adjacency here).
+      const { fromStatuses, toStatus } = guardedTransitionFor("cancel");
       const rows = await db
         .update(workflowExecutions)
         .set({
-          status: "cancelled",
+          status: toStatus,
           leaseOwner: null,
           leaseExpiresAt: null,
           nextAttemptAt: null,
@@ -332,8 +347,7 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
           and(
             eq(workflowExecutions.id, workflowId),
             eq(workflowExecutions.familyId, familyId),
-            // Cancel only where safe: queued or parked between stages.
-            inArray(workflowExecutions.status, ["queued", "waiting"]),
+            inArray(workflowExecutions.status, fromStatuses),
           ),
         )
         .returning();
@@ -342,10 +356,13 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
 
     async requeue(familyId, workflowId) {
       const now = new Date();
+      // Source set + target derived from the pure state machine (only a
+      // dead-lettered `failed` execution has a `resume` edge → `queued`).
+      const { fromStatuses, toStatus } = guardedTransitionFor("resume");
       const rows = await db
         .update(workflowExecutions)
         .set({
-          status: "queued",
+          status: toStatus,
           attempt: 0,
           lastError: null,
           nextAttemptAt: null,
@@ -357,8 +374,7 @@ export function createWorkflowRepository(db: Database): WorkflowRepository {
           and(
             eq(workflowExecutions.id, workflowId),
             eq(workflowExecutions.familyId, familyId),
-            // Only a dead-lettered workflow is re-queued.
-            eq(workflowExecutions.status, "failed"),
+            inArray(workflowExecutions.status, fromStatuses),
           ),
         )
         .returning();

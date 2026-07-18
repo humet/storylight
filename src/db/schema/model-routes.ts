@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   jsonb,
   pgEnum,
@@ -12,7 +13,11 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { LANGUAGE_CAPABILITIES } from "@/domain/model-capability";
-import type { ApprovalRecord, GenerationSettings } from "@/domain/model-route";
+import type {
+  ApprovalRecord,
+  CanaryRule,
+  GenerationSettings,
+} from "@/domain/model-route";
 import { ROUTE_LIFECYCLE_STATUSES } from "@/domain/model-route";
 
 /**
@@ -53,6 +58,18 @@ export const modelRouteVersions = pgTable(
     lifecycleStatus: routeLifecycleStatus("lifecycle_status").notNull(),
     evaluationProfile: text("evaluation_profile"),
     approvalRecord: jsonb("approval_record").$type<ApprovalRecord>(),
+    /**
+     * CANARY routing (M10, `docs/03-ai/evaluation.md` "Shadow and canary",
+     * `docs/06-engineering/deployment.md` "Feature flags"). A canary route is an
+     * active-status ALTERNATIVE for its capability that applies ONLY to newly
+     * created stories/series and is then PINNED per series (M8 pinning already
+     * guarantees existing series never drift). It coexists with the one non-canary
+     * active baseline — the partial-unique below excludes canaries so both can be
+     * `active` at once.
+     */
+    isCanary: boolean("is_canary").notNull().default(false),
+    /** Rollout rule when `isCanary` (percent of NEW stories routed to it). */
+    canaryRule: jsonb("canary_rule").$type<CanaryRule>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -62,10 +79,18 @@ export const modelRouteVersions = pgTable(
       table.capability,
       table.version,
     ),
-    // At most ONE active route per capability (DB-enforced).
+    // At most ONE active NON-CANARY (baseline) route per capability (DB-enforced).
     uniqueIndex("model_route_versions_one_active_per_capability")
       .on(table.capability)
-      .where(sql`${table.lifecycleStatus} = 'active'`),
+      .where(
+        sql`${table.lifecycleStatus} = 'active' and ${table.isCanary} = false`,
+      ),
+    // At most ONE active CANARY per capability.
+    uniqueIndex("model_route_versions_one_canary_per_capability")
+      .on(table.capability)
+      .where(
+        sql`${table.lifecycleStatus} = 'active' and ${table.isCanary} = true`,
+      ),
     index("model_route_versions_capability_idx").on(table.capability),
   ],
 );

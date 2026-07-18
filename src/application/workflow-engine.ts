@@ -127,7 +127,12 @@ export type WorkflowRegistry = Record<string, AnyWorkflowDefinition>;
 export type StepOutcome =
   | { kind: "advanced"; status: WorkflowStatus }
   | { kind: "completed" }
-  | { kind: "retry"; backoffMs: number; error: WorkflowError }
+  | {
+      kind: "retry";
+      backoffMs: number;
+      error: WorkflowError;
+      nextAttemptAt: Date;
+    }
   | { kind: "failed"; error: WorkflowError }
   | { kind: "locked" }
   | { kind: "terminal"; status: WorkflowStatus };
@@ -208,12 +213,21 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
   async function runNextStage(
     workflowId: string,
     leaseOwner: string,
+    /**
+     * The wall clock for THIS drive attempt. Defaults to `now()`; the driving
+     * loop passes a logical clock advanced past a just-elapsed retry back-off so
+     * the DB-level `next_attempt_at` claim gate lets the SAME loop reclaim after
+     * it has actually waited (a foreign dispatcher, having not waited, is still
+     * blocked by the gate).
+     */
+    atNow?: Date,
   ): Promise<StepOutcome> {
+    const stamp = atNow ?? now();
     const claimed = await repo.claim({
       workflowId,
       leaseOwner,
       leaseMs,
-      now: now(),
+      now: stamp,
     });
     if (!claimed) {
       const current = await repo.getExecutionById(workflowId);
@@ -243,7 +257,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           internalDetail: `Unknown stage "${claimed.currentStage}" for workflow type "${claimed.type}".`,
           stage: "workflow.stage",
         }),
-        now(),
+        stamp,
       );
       await repo.recordFailure({
         workflowId,
@@ -251,7 +265,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         attempt: claimed.attempt,
         error,
         nextStatus: transitionWorkflowStatus("running", "fail"),
-        now: now(),
+        now: stamp,
       });
       return { kind: "failed", error };
     }
@@ -274,7 +288,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         leaseOwner,
         nextStage,
         nextStatus: status,
-        now: now(),
+        now: stamp,
       });
       return isLast ? { kind: "completed" } : { kind: "advanced", status };
     }
@@ -302,7 +316,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         attempt: claimed.attempt,
         nextStage,
         nextStatus: status,
-        now: now(),
+        now: stamp,
       });
       return isLast ? { kind: "completed" } : { kind: "advanced", status };
     } catch (thrown) {
@@ -310,20 +324,21 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       const attemptsMade = claimed.attempt + 1;
       const { retryable } = classifyFailure(thrown);
       const policy = def.retryPolicy ?? DEFAULT_RETRY_POLICY;
-      const error = toWorkflowError(thrown, now());
+      const error = toWorkflowError(thrown, stamp);
 
       if (retryable && !isRetryExhausted(attemptsMade, policy)) {
         const backoffMs = computeBackoffMs(attemptsMade, policy);
+        const nextAttemptAt = new Date(stamp.getTime() + backoffMs);
         await repo.recordRetry({
           workflowId,
           leaseOwner,
           attempt: attemptsMade,
           error,
           nextStatus: transitionWorkflowStatus("running", "retry"),
-          nextAttemptAt: new Date(now().getTime() + backoffMs),
-          now: now(),
+          nextAttemptAt,
+          now: stamp,
         });
-        return { kind: "retry", backoffMs, error };
+        return { kind: "retry", backoffMs, error, nextAttemptAt };
       }
 
       await repo.recordFailure({
@@ -332,7 +347,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         attempt: attemptsMade,
         error,
         nextStatus: transitionWorkflowStatus("running", "fail"),
-        now: now(),
+        now: stamp,
       });
       return { kind: "failed", error };
     }
@@ -354,6 +369,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     let stagesRun = 0;
     let lockedWaits = 0;
     let lastError: WorkflowError | undefined;
+    // After a retry we sleep the back-off; the next claim must present a clock at
+    // or past the scheduled `next_attempt_at` so the DB gate lets THIS loop (which
+    // actually waited) reclaim. Cleared once any stage makes progress.
+    let reclaimAt: Date | undefined;
 
     for (;;) {
       if (options.shouldContinue && !options.shouldContinue(stagesRun)) {
@@ -375,17 +394,25 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         };
       }
 
-      const outcome = await runNextStage(workflowId, leaseOwner);
+      // Present a clock at or past a just-scheduled retry when real time has not
+      // caught up yet (e.g. tests using an instant sleep), so the same loop can
+      // reclaim its own parked-for-retry row through the `next_attempt_at` gate.
+      const base = now();
+      const atNow =
+        reclaimAt && reclaimAt.getTime() > base.getTime() ? reclaimAt : base;
+      const outcome = await runNextStage(workflowId, leaseOwner, atNow);
       switch (outcome.kind) {
         case "advanced":
           stagesRun += 1;
           lockedWaits = 0; // progress made — the locked budget refreshes
+          reclaimAt = undefined;
           continue;
         case "completed":
           stagesRun += 1;
           return { finalStatus: "completed", stagesRun, stopped: false };
         case "retry":
           lastError = outcome.error;
+          reclaimAt = outcome.nextAttemptAt;
           await sleep(outcome.backoffMs);
           continue;
         case "failed":

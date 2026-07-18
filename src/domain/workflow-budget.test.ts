@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  consumeImageCall,
   consumeTextCall,
   EMPTY_LEDGER,
+  imageCallBreach,
   textCallBreach,
   type WorkflowBudget,
 } from "./workflow-budget";
@@ -48,5 +50,31 @@ describe("consumeTextCall", () => {
       outputTokens: 20,
       estimatedCostMinorUnits: 42,
     });
+  });
+});
+
+const IMAGE_BUDGET: WorkflowBudget = {
+  maximumTextCalls: 0,
+  maximumImageCalls: 3,
+  maximumOutputTokens: 0,
+  maximumEstimatedCostMinorUnits: 3_000,
+};
+
+describe("imageCallBreach / consumeImageCall", () => {
+  it("allows up to the image-call ceiling, then breaches", () => {
+    let ledger = EMPTY_LEDGER;
+    expect(imageCallBreach(ledger, IMAGE_BUDGET)).toBeNull();
+    for (let i = 0; i < 3; i += 1) {
+      expect(imageCallBreach(ledger, IMAGE_BUDGET)).toBeNull();
+      ledger = consumeImageCall(ledger, 350);
+    }
+    expect(imageCallBreach(ledger, IMAGE_BUDGET)).toBe("image-calls");
+    expect(ledger.imageCalls).toBe(3);
+    expect(ledger.estimatedCostMinorUnits).toBe(1_050);
+  });
+
+  it("breaches on the cost ceiling before the call ceiling", () => {
+    const ledger = { ...EMPTY_LEDGER, estimatedCostMinorUnits: 3_000 };
+    expect(imageCallBreach(ledger, IMAGE_BUDGET)).toBe("estimated-cost");
   });
 });

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { isDomainError } from "@/lib/errors";
-import { canTransition, transitionWorkflowStatus } from "./workflow-transition";
+import {
+  canTransition,
+  guardedTransitionFor,
+  transitionWorkflowStatus,
+} from "./workflow-transition";
 import type { WorkflowEvent, WorkflowStatus } from "./workflow";
 import { WORKFLOW_STATUSES } from "./workflow";
 
@@ -82,5 +86,33 @@ describe("transitionWorkflowStatus", () => {
     const legal = EVENTS.filter((e) => canTransition("failed", e));
     expect(legal).toEqual(["resume"]);
     expect(transitionWorkflowStatus("failed", "resume")).toBe("queued");
+  });
+
+  describe("guardedTransitionFor (the source of truth for cancel/requeue guards)", () => {
+    it("derives cancel's source set + single target from the matrix", () => {
+      const { fromStatuses, toStatus } = guardedTransitionFor("cancel");
+      expect(toStatus).toBe("cancelled");
+      // Every status with a `cancel` edge, and only those.
+      expect([...fromStatuses].sort()).toEqual(
+        WORKFLOW_STATUSES.filter((s) => canTransition(s, "cancel")).sort(),
+      );
+      expect([...fromStatuses].sort()).toEqual(
+        ["queued", "running", "waiting"].sort(),
+      );
+    });
+
+    it("derives resume's source set + target (failed → queued)", () => {
+      const { fromStatuses, toStatus } = guardedTransitionFor("resume");
+      expect(toStatus).toBe("queued");
+      expect(fromStatuses).toEqual(["failed"]);
+    });
+
+    it("resolves claim to a single target from both resting sources", () => {
+      // `claim` leaves queued AND waiting but always → running, so it is a valid
+      // single-target guarded transition (the guard uses both source statuses).
+      const { fromStatuses, toStatus } = guardedTransitionFor("claim");
+      expect(toStatus).toBe("running");
+      expect([...fromStatuses].sort()).toEqual(["queued", "waiting"].sort());
+    });
   });
 });

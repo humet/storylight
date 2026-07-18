@@ -988,6 +988,8 @@ describe("M8 series pipeline", () => {
         approvedBy: "test",
         approvedAt: "2026-07-18T00:00:00Z",
       },
+      isCanary: false,
+      canaryRule: null,
     });
 
     // Generate chapter 2 — it must use the PINNED route, not the new active.
