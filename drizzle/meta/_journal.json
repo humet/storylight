@@ -29,6 +29,13 @@
       "when": 1784370251138,
       "tag": "0003_absent_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784374840628,
+      "tag": "0004_red_stryfe",
+      "breakpoints": true
     }
   ]
 }

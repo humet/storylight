@@ -228,6 +228,8 @@ describe("idempotent creation", () => {
       workflowRepository: repo,
       registry: createWorkflowRegistry({
         visualCharacterService: {} as never,
+        structuredGenerator: {} as never,
+        generationRunRepository: {} as never,
       }),
       dispatcher,
     });
@@ -559,7 +561,11 @@ describe("client-safe status view + family scoping", () => {
     const service = createWorkflowService({
       familyRepository: familyRepo,
       workflowRepository: repo,
-      registry: createWorkflowRegistry({ visualCharacterService: {} as never }),
+      registry: createWorkflowRegistry({
+        visualCharacterService: {} as never,
+        structuredGenerator: {} as never,
+        generationRunRepository: {} as never,
+      }),
       dispatcher: recordingDispatcher(),
     });
 
@@ -614,7 +620,11 @@ describe("real consumer: generate character candidates on the engine", () => {
         imageModel: createFakeImageModel(),
       });
 
-      const registry = createWorkflowRegistry({ visualCharacterService });
+      const registry = createWorkflowRegistry({
+        visualCharacterService,
+        structuredGenerator: {} as never,
+        generationRunRepository: {} as never,
+      });
       const engine = createWorkflowEngine({ repo: workflowRepo, registry });
       const service = createWorkflowService({
         familyRepository: familyRepo,
@@ -681,7 +691,11 @@ describe("real consumer: generate character candidates on the engine", () => {
         objectStorage: createFilesystemObjectStorage(storageRoot),
         imageModel: createFakeImageModel(),
       });
-      const registry = createWorkflowRegistry({ visualCharacterService });
+      const registry = createWorkflowRegistry({
+        visualCharacterService,
+        structuredGenerator: {} as never,
+        generationRunRepository: {} as never,
+      });
       const engine = createWorkflowEngine({ repo: workflowRepo, registry });
       const service = createWorkflowService({
         familyRepository: familyRepo,

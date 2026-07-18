@@ -1,3 +1,5 @@
+import type { StructuredGenerator } from "./ai/generate-structured";
+import type { GenerationRunRepository } from "./ports/generation-run-repository";
 import type { VisualCharacterService } from "./visual-character-service";
 import {
   asWorkflowDefinition,
@@ -5,6 +7,7 @@ import {
   type WorkflowRegistry,
 } from "./workflow-engine";
 import { createGenerateCharacterCandidatesWorkflow } from "./workflows/generate-character-candidates-workflow";
+import { createStructuredPlanDemoWorkflow } from "./workflows/structured-plan-demo-workflow";
 import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflow";
 
 /**
@@ -15,6 +18,9 @@ import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflo
  */
 export interface WorkflowRegistryDeps {
   visualCharacterService: VisualCharacterService;
+  /** M6 structured-generation pipeline + its persistence, for the demo workflow. */
+  structuredGenerator: StructuredGenerator;
+  generationRunRepository: GenerationRunRepository;
 }
 
 export function createWorkflowRegistry(
@@ -29,6 +35,13 @@ export function createWorkflowRegistry(
     asWorkflowDefinition(
       createGenerateCharacterCandidatesWorkflow({
         visualCharacterService: deps.visualCharacterService,
+      }),
+    ),
+    // M6 exit demonstration: a structured artifact through the full pipeline.
+    asWorkflowDefinition(
+      createStructuredPlanDemoWorkflow({
+        structuredGenerator: deps.structuredGenerator,
+        generationRunRepository: deps.generationRunRepository,
       }),
     ),
   ];

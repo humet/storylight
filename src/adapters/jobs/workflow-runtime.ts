@@ -9,11 +9,17 @@ import { createWorkflowRegistry } from "@/application/workflow-registry";
 import type { WorkflowRegistry } from "@/application/workflow-engine";
 import type { WorkflowRepository } from "@/application/ports/workflow-repository";
 import type { FamilyRepository } from "@/application/ports/family-repository";
+import { createStructuredGenerator } from "@/application/ai/generate-structured";
+import { createModelRegistry } from "@/application/model-routes/model-registry";
+import { createModelPricing } from "@/application/model-routes/pricing";
 import { getImageModel } from "@/adapters/images";
+import { getLanguageModel } from "@/adapters/ai";
 import { getObjectStorage } from "@/adapters/storage/object-storage";
 import { getDb } from "@/db/client";
 import { createCharacterRepository } from "@/db/repositories/character-repository";
 import { createFamilyRepository } from "@/db/repositories/family-repository";
+import { createGenerationRunRepository } from "@/db/repositories/generation-run-repository";
+import { createModelRouteRepository } from "@/db/repositories/model-route-repository";
 import { createVisualAssetRepository } from "@/db/repositories/visual-asset-repository";
 import { createWorkflowRepository } from "@/db/repositories/workflow-repository";
 
@@ -47,7 +53,20 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
     imageModel: getImageModel(),
   });
 
-  const registry = createWorkflowRegistry({ visualCharacterService });
+  // M6 structured-generation stack (capability routing → pipeline → run records).
+  const modelRegistry = createModelRegistry(createModelRouteRepository(db));
+  const structuredGenerator = createStructuredGenerator({
+    modelRegistry,
+    languageModel: getLanguageModel(),
+    pricing: createModelPricing(),
+  });
+  const generationRunRepository = createGenerationRunRepository(db);
+
+  const registry = createWorkflowRegistry({
+    visualCharacterService,
+    structuredGenerator,
+    generationRunRepository,
+  });
   const engine = createWorkflowEngine({ repo: workflowRepository, registry });
 
   return { engine, workflowRepository, familyRepository, registry };

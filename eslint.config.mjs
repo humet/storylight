@@ -9,14 +9,24 @@ import nextTs from "eslint-config-next/typescript";
 // "Provider SDKs must not leak into domain or frontend code"). Grows as
 // providers are adopted per docs/decisions/ADR-006-concrete-infrastructure.md.
 const providerImportPatterns = [
-  "ai",
-  "ai/*",
   "@ai-sdk/*",
   "@vercel/blob",
   "@vercel/blob/*",
   "better-auth",
   "better-auth/*",
 ];
+
+// The Vercel AI SDK (`ai` package) is matched by an ANCHORED regex rather than a
+// gitignore-style group, for the SAME reason as the `workflow` package below: a
+// bare `ai`/`ai/*` group also matches internal modules under an `ai/` directory
+// (e.g. `@/adapters/ai/*`, `@/application/ai/*`, `./ai/generate-structured`).
+// `^ai(/.*)?$` matches only the real package and its subpaths, so the gateway
+// adapter is fenced to src/adapters/ without colliding with our own `ai/` dirs.
+const aiPackageRestriction = {
+  regex: "^ai(/.*)?$",
+  message:
+    "The Vercel AI SDK (`ai`) may only be imported inside src/adapters/ai/ (domain rule 12). Depend on the LanguageModel port instead.",
+};
 
 // The Vercel Workflow DevKit (`workflow` package) is matched by an ANCHORED
 // regex rather than a gitignore-style group: a bare `workflow` group would also
@@ -73,6 +83,7 @@ const eslintConfig = defineConfig([
         {
           patterns: [
             providerRestriction,
+            aiPackageRestriction,
             workflowPackageRestriction,
             databaseRestriction,
           ],
@@ -86,7 +97,13 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": [
         "error",
-        { patterns: [providerRestriction, workflowPackageRestriction] },
+        {
+          patterns: [
+            providerRestriction,
+            aiPackageRestriction,
+            workflowPackageRestriction,
+          ],
+        },
       ],
     },
   }, // Override default ignores of eslint-config-next.
