@@ -261,6 +261,107 @@ describe("M6 exit: structured artifact through the full pipeline", () => {
     ).toBeNull();
   });
 
+  it("dead-letters WITHOUT retrying or walking fallbacks on a non-retryable provider rejection", async () => {
+    const user = await seedUser("m6-provider-reject");
+    const familyId = await seedFamily(user, "Rejecters");
+    const actor = ownerActor(user, familyId);
+    // The provider throws a NON-retryable error on every call.
+    const { engine, service, generationRunRepository, workflowRepo } =
+      buildStack({
+        kind: "provider-error",
+        message: "gateway: 400 bad request",
+      });
+
+    const handle = await service.startWorkflow(
+      actor,
+      STRUCTURED_PLAN_DEMO_TYPE,
+      "plan-reject",
+      { idea: "a lantern" },
+    );
+    const drive = await engine.runToCompletion(handle.workflowId, {
+      sleep: async () => {},
+    });
+    expect(drive.finalStatus).toBe("failed");
+
+    const dead = await workflowRepo.getExecutionById(handle.workflowId);
+    expect(dead?.status).toBe("failed");
+    expect(dead?.lastError?.code).toBe("GENERATION_FAILED");
+
+    // Exactly ONE run row: the pipeline failed fast (no fallback walk) and the
+    // engine dead-lettered without retrying (a non-retryable classification).
+    const runs = await generationRunRepository.listRunsForWorkflow(
+      handle.workflowId,
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0].outcome).toBe("failed");
+    expect(runs[0].failureKind).toBe("provider-rejected");
+    // No artifact persisted on failure.
+    expect(
+      await generationRunRepository.getArtifact(handle.workflowId, "plan"),
+    ).toBeNull();
+  });
+
+  it("getArtifact returns the REQUESTED stage's artifact in a multi-stage workflow", async () => {
+    const user = await seedUser("m6-multistage");
+    const familyId = await seedFamily(user, "MultiStage");
+    const actor = ownerActor(user, familyId);
+    const { service, generationRunRepository } = buildStack({
+      kind: "text",
+      text: VALID_PLAN,
+    });
+    // A real workflow row to satisfy the artifact FK (no stage is driven).
+    const handle = await service.startWorkflow(
+      actor,
+      STRUCTURED_PLAN_DEMO_TYPE,
+      "plan-multistage",
+      { idea: "a lantern" },
+    );
+
+    // Two stages' artifacts under ONE workflow.
+    await generationRunRepository.recordGeneration({
+      workflowId: handle.workflowId,
+      stageKey: "stage-a",
+      familyId,
+      capability: "one-off-planning",
+      attempts: [],
+      artifact: {
+        schemaVersion: "synthetic-plan.v1",
+        kind: "synthetic-plan",
+        payload: { marker: "A" },
+      },
+    });
+    await generationRunRepository.recordGeneration({
+      workflowId: handle.workflowId,
+      stageKey: "stage-b",
+      familyId,
+      capability: "one-off-planning",
+      attempts: [],
+      artifact: {
+        schemaVersion: "synthetic-plan.v1",
+        kind: "synthetic-plan",
+        payload: { marker: "B" },
+      },
+    });
+
+    const a = await generationRunRepository.getArtifact(
+      handle.workflowId,
+      "stage-a",
+    );
+    const b = await generationRunRepository.getArtifact(
+      handle.workflowId,
+      "stage-b",
+    );
+    // Each lookup resolves to ITS OWN stage — not whichever row LIMIT 1 returned.
+    expect((a?.payload as { marker: string }).marker).toBe("A");
+    expect((b?.payload as { marker: string }).marker).toBe("B");
+    expect(a?.stageKey).toBe("stage-a");
+    expect(b?.stageKey).toBe("stage-b");
+    // A stage with no artifact is null (not another stage's row).
+    expect(
+      await generationRunRepository.getArtifact(handle.workflowId, "stage-c"),
+    ).toBeNull();
+  });
+
   it("re-records idempotently after a lost stage output (no duplicate rows)", async () => {
     const user = await seedUser("m6-idem");
     const familyId = await seedFamily(user, "Idempotent");

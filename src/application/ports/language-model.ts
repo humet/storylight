@@ -18,10 +18,20 @@ import type { GenerationSettings } from "@/domain/model-route";
  * validation of `text` is authoritative — which also makes the FAKE adapter
  * trivially scriptable (return a fixture string, malformed JSON, or a truncation).
  *
- * AVAILABILITY failures (timeout / rate-limit / outage) are thrown as a RETRYABLE
- * domain error so the pipeline can try the route's fallbacks. All other outcomes
- * (including a content filter or a truncation) are returned as a response with the
- * corresponding `finishReason`.
+ * THROW CONTRACT: an adapter may reject with a {@link DomainError} whose
+ * `retryable` flag classifies the failure, and the pipeline MUST honour it:
+ *   - RETRYABLE throw = an AVAILABILITY failure (timeout / rate-limit / outage);
+ *     the pipeline walks the route's fallbacks and, if all are exhausted, surfaces
+ *     a retryable "unavailable" failure.
+ *   - NON-RETRYABLE throw = a terminal provider rejection the adapter has already
+ *     classified (a 4xx / malformed request from the gateway, or a missing
+ *     `AI_GATEWAY_API_KEY`). It is NOT an availability failure: the pipeline must
+ *     fail fast with that classification — no fallback walk, no retry masking.
+ * A throw whose retryability is unknown is treated as retryable (availability).
+ *
+ * All NON-throwing outcomes (including a content filter or a truncation) are
+ * returned as a response with the corresponding `finishReason` for the pipeline
+ * to classify.
  */
 
 /** Normalised finish reasons the pipeline reasons about. */
@@ -58,8 +68,10 @@ export interface LanguageModelResponse {
 
 export interface LanguageModel {
   /**
-   * Generate once. Resolves with the raw response, or REJECTS with a retryable
-   * domain error on an availability failure (so the pipeline tries a fallback).
+   * Generate once. Resolves with the raw response, or REJECTS with a
+   * {@link DomainError}: retryable on an availability failure (the pipeline tries
+   * a fallback), non-retryable on a terminal provider rejection (the pipeline
+   * fails fast). See the THROW CONTRACT above.
    */
   generate(request: LanguageModelRequest): Promise<LanguageModelResponse>;
 }

@@ -29,6 +29,7 @@ import type {
   LanguageModel,
   LanguageModelResponse,
 } from "../ports/language-model";
+import { serialiseUntrusted } from "../prompts/global-policy";
 import type { PromptAsset } from "../prompts/prompt-asset";
 import type { WireSchema } from "../schemas/wire";
 
@@ -227,9 +228,13 @@ export function createStructuredGenerator(deps: StructuredGeneratorDeps) {
         }
 
         const target = targets[targetIndex];
+        // Repair feedback embeds MODEL-CONTROLLED strings (Zod messages carry the
+        // model's own keys/values; validator messages can too). Serialise it the
+        // same way untrusted input is serialised so it can never forge a `</repair>`
+        // (or any other) envelope tag or alter model authority.
         const userPrompt =
           phase === "model-repair" && repairIssues
-            ? `${built.prompt}\n\n<repair>\nYour previous response did not match the required schema. Correct ONLY these problems and return the full corrected JSON object. Do not add, remove, or invent any other content:\n${repairIssues}\n</repair>`
+            ? `${built.prompt}\n\n<repair>\nYour previous response did not match the required schema. Correct ONLY the problems in the JSON below and return the full corrected JSON object. Do not add, remove, or invent any other content:\n${serialiseUntrusted(repairIssues)}\n</repair>`
             : built.prompt;
 
         // --- The model call (availability failures reject) ---
@@ -247,6 +252,35 @@ export function createStructuredGenerator(deps: StructuredGeneratorDeps) {
         } catch (thrown) {
           const detail =
             thrown instanceof Error ? thrown.message : String(thrown);
+
+          // A NON-retryable throw is a TERMINAL classification the adapter already
+          // made (a 4xx / malformed request from the gateway, or a missing gateway
+          // key). It is not an availability failure: honour the classification and
+          // fail fast — no fallback walk (the next target hits the same condition)
+          // and no retry masking. Only a retryable throw is genuine availability.
+          if (thrown instanceof DomainError && !thrown.retryable) {
+            record({
+              phase,
+              outcome: "failed",
+              failureKind: "provider-rejected",
+              capability,
+              modelRouteVersionId: route.id,
+              routeVersion: route.version,
+              target,
+              resolvedModelId: "",
+              promptVersion: prompt.version,
+              schemaVersion: wireSchema.schemaVersion,
+              usage: ZERO_USAGE,
+              estimatedCostMinorUnits: 0,
+              latencyMs: 0,
+            });
+            return failFast(
+              "provider-rejected",
+              false,
+              `Provider rejected the request (non-retryable) for "${capability}": ${detail}`,
+            );
+          }
+
           record({
             phase,
             outcome: "failed",
@@ -283,6 +317,34 @@ export function createStructuredGenerator(deps: StructuredGeneratorDeps) {
         ledger = consumeTextCall(ledger, response.usage, cost);
         aggregateUsage = addUsage(aggregateUsage, response.usage);
         aggregateLatency += response.latencyMs;
+
+        // --- Content filter: a TERMINAL, non-retryable stop ---
+        // The provider refused to produce content. Spinning the regenerate ladder
+        // would just burn the budget to the same refusal, so we classify it
+        // distinctly, record the failed attempt for lineage, persist NO artifact,
+        // and fail fast with a safe non-retryable error (no further rungs).
+        if (response.finishReason === "content-filter") {
+          record({
+            phase,
+            outcome: "failed",
+            failureKind: "content-filtered",
+            capability,
+            modelRouteVersionId: route.id,
+            routeVersion: route.version,
+            target,
+            resolvedModelId: response.resolvedModelId,
+            promptVersion: prompt.version,
+            schemaVersion: wireSchema.schemaVersion,
+            usage: response.usage,
+            estimatedCostMinorUnits: cost,
+            latencyMs: response.latencyMs,
+          });
+          return failFast(
+            "content-filtered",
+            false,
+            `Content filter stopped generation for "${capability}"; not retried.`,
+          );
+        }
 
         // --- Parse (JSON.parse only; structural extraction for syntax repair) ---
         let parsed = safeParseJson(response.text);

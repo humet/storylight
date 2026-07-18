@@ -14,11 +14,13 @@ import { generationFailedError } from "@/lib/errors";
  *
  * It is deliberately dumb: it ignores the prompt and returns whatever the script
  * says, so a test can drive any outcome the pipeline must handle — a valid
- * fixture, malformed JSON, a truncation (`finishReason: "length"`), a
- * schema-violating object, or an availability failure (which throws a retryable
- * error so the pipeline exercises fallbacks). A script may be a single response, a
- * SEQUENCE (call N gets item N; the last item repeats), or a function of the
- * request + call index.
+ * fixture, malformed JSON, a truncation (`finishReason: "length"`), a content
+ * filter (`finishReason: "content-filter"`), a schema-violating object, an
+ * availability failure (`kind: "unavailable"` — throws a RETRYABLE error so the
+ * pipeline exercises fallbacks), or a terminal provider rejection
+ * (`kind: "provider-error"` — throws a NON-retryable error so the pipeline must
+ * fail fast). A script may be a single response, a SEQUENCE (call N gets item N;
+ * the last item repeats), or a function of the request + call index.
  */
 
 export interface FakeTextResponse {
@@ -35,7 +37,14 @@ export interface FakeUnavailableResponse {
   message?: string;
 }
 
-export type FakeModelResponse = FakeTextResponse | FakeUnavailableResponse;
+/** A terminal, NON-retryable provider rejection (4xx / malformed / misconfig). */
+export interface FakeProviderErrorResponse {
+  kind: "provider-error";
+  message?: string;
+}
+
+export type FakeModelResponse =
+  FakeTextResponse | FakeUnavailableResponse | FakeProviderErrorResponse;
 
 export type FakeScript =
   | FakeModelResponse
@@ -76,6 +85,18 @@ export function createFakeLanguageModel(script: FakeScript): LanguageModel {
           safeMessage: "The service is busy. Please try again.",
           internalDetail: response.message ?? "fake: unavailable",
           retryable: true,
+          stage: "adapter.fake-language-model",
+        });
+      }
+
+      if (response.kind === "provider-error") {
+        // Terminal provider rejection → NON-retryable, so the pipeline must fail
+        // fast: no fallback walk, no retry masking (mirrors the gateway adapter's
+        // throw for a 4xx / malformed request or a missing gateway key).
+        throw generationFailedError({
+          safeMessage: "We couldn't complete this. Please try again.",
+          internalDetail: response.message ?? "fake: provider rejected",
+          retryable: false,
           stage: "adapter.fake-language-model",
         });
       }

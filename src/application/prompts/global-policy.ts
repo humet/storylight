@@ -12,6 +12,15 @@
  * and additionally angle-bracket-escaped so they can never forge an envelope tag
  * or alter model authority. They are NEVER interpolated into system instructions
  * or tag names.
+ *
+ * CANONICAL-CONTEXT RULE: canonical context is trusted STRUCTURE, not trusted
+ * BYTES. Some canonical fields are ultimately parent-authored free text (e.g. an
+ * age band or a child's name). Any such value could contain angle brackets that
+ * forge a closing tag, so `serialiseCanonical` applies the SAME angle-bracket
+ * escaping as `serialiseUntrusted`. THE PATTERN M7 (and every later milestone that
+ * feeds parent input into canonical context) MUST COPY: any user-authored value
+ * entering canonical context must be either enum-constrained at its input boundary
+ * or escaped here — never both trusted and unbounded.
  */
 
 /**
@@ -31,21 +40,34 @@ export const GLOBAL_POLICY = [
   "- Use the supplied local keys. Never invent or emit database identifiers.",
 ].join("\n");
 
-/** The untrusted-input serialiser: JSON, then angle-bracket/ampersand escaped. */
-export function serialiseUntrusted(value: unknown): string {
-  // JSON first so structure is explicit and unambiguous; then neutralise the
-  // three characters that could forge an envelope tag, using JSON's own \uXXXX
-  // escapes so the block remains valid JSON that a model reads as literal text.
-  const json = JSON.stringify(value ?? null);
+/**
+ * Neutralise the three characters that could forge an envelope tag, using JSON's
+ * own `\uXXXX` escapes so the block remains valid JSON that a model reads as
+ * literal text. Applied to any string that will be interpolated into the envelope
+ * (untrusted input, canonical context, or model-controlled repair feedback).
+ */
+export function escapeEnvelopeText(json: string): string {
   return json
     .replace(/&/g, "\\u0026")
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e");
 }
 
-/** Trusted, structured canonical context — serialised as pretty JSON. */
+/** The untrusted-input serialiser: JSON, then angle-bracket/ampersand escaped. */
+export function serialiseUntrusted(value: unknown): string {
+  // JSON first so structure is explicit and unambiguous; then neutralise the
+  // characters that could forge an envelope tag.
+  return escapeEnvelopeText(JSON.stringify(value ?? null));
+}
+
+/**
+ * Trusted, structured canonical context — serialised as pretty JSON. The
+ * STRUCTURE is trusted, but individual VALUES may be user-authored free text, so
+ * we apply the same angle-bracket escaping as {@link serialiseUntrusted}: a
+ * canonical field can never forge a `</canonical_context>` (or any other) tag.
+ */
 export function serialiseCanonical(value: unknown): string {
-  return JSON.stringify(value ?? null, null, 2);
+  return escapeEnvelopeText(JSON.stringify(value ?? null, null, 2));
 }
 
 export interface RequestEnvelopeParts {

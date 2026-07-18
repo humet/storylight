@@ -47,6 +47,8 @@ export type RepairPhase =
 /** Why a single attempt failed (internal classification; never client-facing). */
 export type GenerationFailureKind =
   | "unavailable" // timeout / rate-limit / outage — availability fallback territory
+  | "provider-rejected" // provider threw a NON-retryable error (4xx / malformed request / misconfig) — terminal, no fallback
+  | "content-filtered" // provider stopped on a content filter — terminal, non-retryable, no further rungs
   | "unparsable" // not valid JSON and not locally extractable
   | "truncated" // finished on length / structurally incomplete
   | "schema-violation" // parsed JSON failed wire-schema validation

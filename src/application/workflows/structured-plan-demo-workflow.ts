@@ -35,10 +35,19 @@ import type { StageResult, WorkflowDefinition } from "../workflow-engine";
 
 export const STRUCTURED_PLAN_DEMO_TYPE = "structured-plan-demo";
 
+/**
+ * The closed vocabulary of supported age bands. `ageBand` is parent-supplied and
+ * flows into canonical context, so it is enum-constrained at this input boundary
+ * rather than left as free text (`global-policy.ts` CANONICAL-CONTEXT RULE):
+ * canonical values must be enum-constrained or escaped, never both trusted and
+ * unbounded.
+ */
+export const AGE_BANDS = ["0-2", "3-4", "5-7", "8-10"] as const;
+
 export const StructuredPlanDemoInputSchema = z.object({
   /** The parent's untrusted free-text story idea. */
   idea: z.string().min(1).max(500),
-  ageBand: z.string().min(1).max(40).optional(),
+  ageBand: z.enum(AGE_BANDS).optional(),
   maxBeats: z.number().int().min(1).max(12).optional(),
 });
 export type StructuredPlanDemoInput = z.infer<

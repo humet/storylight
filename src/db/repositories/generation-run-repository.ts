@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import type {
   GenerationArtifactRecord,
@@ -157,13 +157,20 @@ export function createGenerationRunRepository(
     },
 
     async getArtifact(workflowId, stageKey) {
+      // Filter BOTH keys in SQL: a workflow may have artifacts for several stages,
+      // so a workflow-only WHERE + LIMIT 1 could return the wrong stage's row. The
+      // unique(workflow, stage) index means at most one row matches both.
       const [row] = await db
         .select()
         .from(generationArtifacts)
-        .where(eq(generationArtifacts.workflowId, workflowId))
+        .where(
+          and(
+            eq(generationArtifacts.workflowId, workflowId),
+            eq(generationArtifacts.stageKey, stageKey),
+          ),
+        )
         .limit(1);
-      // The unique(workflow, stage) means at most one; filter defensively.
-      if (!row || row.stageKey !== stageKey) return null;
+      if (!row) return null;
       return toArtifact(row);
     },
   };
