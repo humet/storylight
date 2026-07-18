@@ -3,7 +3,7 @@ import "server-only";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
-import { getEnv } from "@/lib/env";
+import { getEnv, isDevLikeEnv } from "@/lib/env";
 import * as schema from "./schema";
 
 /**
@@ -38,9 +38,11 @@ async function create(): Promise<Database> {
     return drizzle(pool, { schema });
   }
 
-  if (env.NODE_ENV === "production") {
+  if (!isDevLikeEnv(env)) {
+    // Positive dev signal required: unset NODE_ENV counts as production, so a
+    // misconfigured deploy can never silently boot on an ephemeral local DB.
     throw new Error(
-      "DATABASE_URL is required in production. Refusing to fall back to the dev PGlite database.",
+      "DATABASE_URL is required outside explicit development/test. Refusing to fall back to the dev PGlite database.",
     );
   }
 

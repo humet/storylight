@@ -25,6 +25,18 @@ export interface FamilyRepository {
   listMembershipsForUser(userId: string): Promise<FamilyMembership[]>;
 
   /**
+   * Idempotent reconciliation guaranteeing the "every user has ≥1 family"
+   * invariant: if the user already has memberships they are returned unchanged;
+   * if they have none (e.g. the best-effort sign-up bootstrap failed), a family
+   * + owner membership is created. Safe under concurrent calls — the
+   * implementation must serialize per user so exactly one family is created.
+   */
+  ensureFamilyForUser(input: {
+    userId: string;
+    familyName: string;
+  }): Promise<FamilyMembership[]>;
+
+  /**
    * The user's membership of a specific family, or `null` if they are not a
    * member. This is the authorisation primitive: a `null` result means the
    * caller must be treated as an outsider to that family.

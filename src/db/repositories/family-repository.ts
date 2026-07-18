@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { FamilyRepository } from "@/application/ports/family-repository";
 import type { Family, FamilyMembership } from "@/domain/family";
 import type { Database } from "../client";
-import { families, familyMembers } from "../schema";
+import { families, familyMembers, users } from "../schema";
 
 /**
  * Drizzle implementation of the {@link FamilyRepository} port. This is the only
@@ -45,6 +45,34 @@ export function createFamilyRepository(db: Database): FamilyRepository {
           family: toFamily(family),
           membership: toMembership(membership),
         };
+      });
+    },
+
+    async ensureFamilyForUser({ userId, familyName }) {
+      return db.transaction(async (tx) => {
+        // Lock the user row so concurrent reconciliations for the same user
+        // serialize here — exactly one of them creates the family.
+        await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, userId))
+          .for("update");
+
+        const existing = await tx
+          .select()
+          .from(familyMembers)
+          .where(eq(familyMembers.userId, userId));
+        if (existing.length > 0) return existing.map(toMembership);
+
+        const [family] = await tx
+          .insert(families)
+          .values({ name: familyName })
+          .returning();
+        const [membership] = await tx
+          .insert(familyMembers)
+          .values({ familyId: family.id, userId, role: "owner" })
+          .returning();
+        return [toMembership(membership)];
       });
     },
 

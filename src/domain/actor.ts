@@ -13,5 +13,11 @@ export type Role = "owner" | "parent" | "viewer";
 export interface AuthenticatedActor {
   userId: string;
   familyIds: string[];
+  /**
+   * ⚠️ Union of the roles the user holds across ALL their families (the shape
+   * `docs/05-backend/auth.md` fixes). Never authorize a family-scoped action
+   * from this flat list — a role held in family A must not grant anything in
+   * family B. Use `authorizeFamilyAction` for per-family decisions.
+   */
   roles: Role[];
 }

@@ -35,3 +35,24 @@ describe("env validation", () => {
     );
   });
 });
+
+describe("safe-by-default NODE_ENV (review finding 2026-07-18)", () => {
+  it("treats an UNSET NODE_ENV as production so insecure fallbacks cannot activate by omission", async () => {
+    const { isDevLikeEnv } = await import("./env");
+    const withoutNodeEnv = { ...process.env };
+    Reflect.deleteProperty(withoutNodeEnv, "NODE_ENV");
+    process.env = withoutNodeEnv;
+    resetEnvCacheForTests();
+
+    const env = getEnv();
+    expect(env.NODE_ENV).toBe("production");
+    expect(isDevLikeEnv(env)).toBe(false);
+  });
+
+  it("isDevLikeEnv requires an explicit development or test value", async () => {
+    const { isDevLikeEnv } = await import("./env");
+    expect(isDevLikeEnv({ NODE_ENV: "development" } as never)).toBe(true);
+    expect(isDevLikeEnv({ NODE_ENV: "test" } as never)).toBe(true);
+    expect(isDevLikeEnv({ NODE_ENV: "production" } as never)).toBe(false);
+  });
+});

@@ -18,9 +18,12 @@ import { z } from "zod";
  * is missing at runtime.
  */
 const EnvSchema = z.object({
-  NODE_ENV: z
-    .enum(["development", "test", "production"])
-    .default("development"),
+  // SAFE BY DEFAULT: an unset NODE_ENV is treated as production so insecure
+  // dev conveniences (fallback secret, PGlite database) can never activate by
+  // omission on a host that doesn't set it (Railway, bare Docker, custom
+  // servers). Real dev flows always set it explicitly: `next dev` =>
+  // development, Vitest => test, `next build`/`next start` => production.
+  NODE_ENV: z.enum(["development", "test", "production"]).default("production"),
 
   // Postgres (Neon via Vercel Marketplace) — wired in M2.
   DATABASE_URL: z.url().optional(),
@@ -77,6 +80,16 @@ export function requireEnv<K extends keyof Env>(key: K): NonNullable<Env[K]> {
     );
   }
   return value as NonNullable<Env[K]>;
+}
+
+/**
+ * Positive dev/test signal for insecure conveniences (fallback auth secret,
+ * PGlite database). Requires NODE_ENV to be EXPLICITLY "development" or
+ * "test" — anything else, including unset (which defaults to "production"),
+ * is treated as production and must refuse insecure fallbacks.
+ */
+export function isDevLikeEnv(env: Env = getEnv()): boolean {
+  return env.NODE_ENV === "development" || env.NODE_ENV === "test";
 }
 
 /** Test-only: reset the memoised env so a test can exercise a fresh parse. */

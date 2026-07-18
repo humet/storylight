@@ -6,7 +6,7 @@ import { nextCookies } from "better-auth/next-js";
 
 import { getDb, schema } from "@/db/client";
 import { createFamilyRepository } from "@/db/repositories/family-repository";
-import { getEnv } from "@/lib/env";
+import { getEnv, isDevLikeEnv, requireEnv } from "@/lib/env";
 
 /**
  * Better Auth adapter — the ONLY module allowed to import the provider SDK
@@ -20,9 +20,11 @@ import { getEnv } from "@/lib/env";
  * plural table exports (`users`).
  *
  * Sign-up family bootstrap: `databaseHooks.user.create.after` creates the new
- * user's family and their `owner` membership in one transaction, so every user
- * has at least one family (`docs/05-backend/auth.md`). Roles/families are then
- * read back by `require-actor.ts`.
+ * user's family and their `owner` membership. The hook runs AFTER the user row
+ * is committed, so it is best-effort, not atomic with user creation — the
+ * "every user has ≥1 family" invariant is actually guaranteed by the
+ * idempotent reconciliation in `require-actor.ts` (`ensureFamilyForUser`),
+ * which heals any account whose bootstrap failed on its next actor resolution.
  *
  * Instantiation is LAZY and async: `betterAuth()` is only ever built on first
  * request (after `getDb()` resolves), never at import time, so `pnpm build`/CI
@@ -36,10 +38,11 @@ function resolveSecret(): string {
   const env = getEnv();
   if (env.BETTER_AUTH_SECRET) return env.BETTER_AUTH_SECRET;
 
-  if (env.NODE_ENV === "production") {
-    // Never boot production auth on a shared, public fallback secret.
+  if (!isDevLikeEnv(env)) {
+    // Never boot production auth on a shared, public fallback secret. Positive
+    // dev signal required: an unset NODE_ENV counts as production.
     throw new Error(
-      "BETTER_AUTH_SECRET is required in production. Refusing to use the dev fallback secret.",
+      "BETTER_AUTH_SECRET is required outside explicit development/test. Refusing to use the dev fallback secret.",
     );
   }
 
@@ -51,7 +54,7 @@ function resolveSecret(): string {
 }
 
 /** A sensible default family name from the signing-up user's display name. */
-function defaultFamilyName(userName: string | undefined | null): string {
+export function defaultFamilyName(userName: string | undefined | null): string {
   const trimmed = userName?.trim();
   if (!trimmed) return "Your family";
   return `${trimmed}'s family`;
@@ -66,6 +69,13 @@ async function createAuth() {
   const env = getEnv();
   const db = await getDb();
 
+  // Outside explicit development/test the canonical origin must be operator-
+  // declared: CSRF/origin trust must not rest on header inference (review
+  // finding, 2026-07-18). In dev, header inference keeps zero-env boot working.
+  const baseURL = isDevLikeEnv(env)
+    ? env.BETTER_AUTH_URL
+    : requireEnv("BETTER_AUTH_URL");
+
   return betterAuth({
     // Postgres/Drizzle persistence (ADR-005/006). Schema keys are plural.
     database: drizzleAdapter(db, {
@@ -74,9 +84,7 @@ async function createAuth() {
       usePlural: true,
     }),
     secret: resolveSecret(),
-    // Infer the base URL from request headers when not explicitly configured
-    // (keeps the dev server booting with zero env vars).
-    ...(env.BETTER_AUTH_URL ? { baseURL: env.BETTER_AUTH_URL } : {}),
+    ...(baseURL ? { baseURL } : {}),
     emailAndPassword: {
       enabled: true,
       // No email delivery yet — accounts are usable immediately.
@@ -86,14 +94,25 @@ async function createAuth() {
     databaseHooks: {
       user: {
         create: {
-          // Bootstrap a family + owner membership atomically after sign-up, so
-          // every user always has at least one family to work in.
+          // Best-effort family bootstrap. The user row is ALREADY committed
+          // when this runs, so a throw here would fail the sign-up response
+          // while leaving a working account behind ("email taken" on retry).
+          // Swallow + log instead: `ensureFamilyForUser` in require-actor.ts
+          // reconciles idempotently on the next actor resolution.
           after: async (user) => {
-            const repository = createFamilyRepository(await getDb());
-            await repository.createFamilyWithOwner({
-              userId: user.id,
-              familyName: defaultFamilyName(user.name),
-            });
+            try {
+              const repository = createFamilyRepository(await getDb());
+              await repository.createFamilyWithOwner({
+                userId: user.id,
+                familyName: defaultFamilyName(user.name),
+              });
+            } catch (error) {
+              console.error(
+                `[storylight] Family bootstrap failed for user ${user.id}; ` +
+                  "will be reconciled on next actor resolution.",
+                error,
+              );
+            }
           },
         },
       },

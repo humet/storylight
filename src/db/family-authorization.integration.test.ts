@@ -160,3 +160,52 @@ describe("role capabilities within a family", () => {
     );
   });
 });
+
+describe("ensureFamilyForUser (orphaned-account reconciliation)", () => {
+  it("creates a family + owner membership for a user with none", async () => {
+    const userId = await seedUser("orphan-1");
+
+    const memberships = await repo.ensureFamilyForUser({
+      userId,
+      familyName: "Healed family",
+    });
+
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]).toMatchObject({ userId, role: "owner" });
+  });
+
+  it("is idempotent: existing memberships are returned unchanged", async () => {
+    const userId = await seedUser("orphan-2");
+    const { family } = await repo.createFamilyWithOwner({
+      userId,
+      familyName: "Original family",
+    });
+
+    const memberships = await repo.ensureFamilyForUser({
+      userId,
+      familyName: "Should not be created",
+    });
+
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0].familyId).toBe(family.id);
+    const allFamilies = await db.query.families.findMany();
+    expect(allFamilies).toHaveLength(1);
+  });
+
+  it("creates exactly one family under concurrent reconciliation", async () => {
+    const userId = await seedUser("orphan-3");
+
+    const results = await Promise.all([
+      repo.ensureFamilyForUser({ userId, familyName: "Race A" }),
+      repo.ensureFamilyForUser({ userId, familyName: "Race B" }),
+      repo.ensureFamilyForUser({ userId, familyName: "Race C" }),
+    ]);
+
+    const familyIds = new Set(
+      results.flat().map((membership) => membership.familyId),
+    );
+    expect(familyIds.size).toBe(1);
+    const rows = await db.select().from(familyMembers);
+    expect(rows).toHaveLength(1);
+  });
+});

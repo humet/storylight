@@ -60,6 +60,12 @@ export function roleGrants(role: Role, capability: FamilyCapability): boolean {
 /**
  * Whether an actor holding `roles` may perform `capability`. An actor is
  * permitted if ANY of their roles grants it (roles are additive).
+ *
+ * ⚠️ NOT family-scoped. `AuthenticatedActor.roles` is the union of roles across
+ * ALL the user's families, so passing it here answers "could they do this in
+ * SOME family they belong to" — never "in THIS family". For any family-scoped
+ * decision use `authorizeFamilyAction` (src/application/family-access.ts),
+ * which checks the membership row's role for that specific family.
  */
 export function actorCan(
   roles: readonly Role[],

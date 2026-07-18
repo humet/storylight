@@ -6,7 +6,7 @@ import { getDb } from "@/db/client";
 import { createFamilyRepository } from "@/db/repositories/family-repository";
 import type { AuthenticatedActor, Role } from "@/domain/actor";
 import { unauthorisedError } from "@/lib/errors";
-import { getAuth } from "./auth";
+import { defaultFamilyName, getAuth } from "./auth";
 
 /**
  * Resolve the current session and map it to the domain `AuthenticatedActor`
@@ -29,7 +29,17 @@ async function resolveActor(): Promise<AuthenticatedActor | null> {
   if (!session?.user) return null;
 
   const repository = createFamilyRepository(await getDb());
-  const memberships = await repository.listMembershipsForUser(session.user.id);
+  let memberships = await repository.listMembershipsForUser(session.user.id);
+
+  if (memberships.length === 0) {
+    // Heal accounts whose best-effort sign-up bootstrap failed: idempotent,
+    // serialized per user (see FamilyRepository.ensureFamilyForUser). This is
+    // what actually guarantees "every user has ≥1 family".
+    memberships = await repository.ensureFamilyForUser({
+      userId: session.user.id,
+      familyName: defaultFamilyName(session.user.name),
+    });
+  }
 
   const familyIds = [...new Set(memberships.map((m) => m.familyId))];
   const roles = [...new Set(memberships.map((m) => m.role))] as Role[];
