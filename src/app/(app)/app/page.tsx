@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireActor } from "@/adapters/auth/require-actor";
@@ -40,6 +41,15 @@ export default async function AppShellPage() {
           next milestones.
         </p>
       </header>
+
+      <nav className="flex flex-col gap-3">
+        <Link
+          href="/app/characters"
+          className="inline-flex min-h-[var(--touch-min)] items-center rounded-lg border border-neutral-200 px-4 font-medium text-neutral-900 dark:border-neutral-800 dark:text-neutral-50"
+        >
+          Manage characters
+        </Link>
+      </nav>
 
       {/* Parent controls remain available but visually secondary during reading
           (domain rule 11). */}

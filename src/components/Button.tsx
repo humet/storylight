@@ -48,6 +48,33 @@ const sizes: Record<ButtonSize, string> = {
 };
 
 /**
+ * The button's visual classes, exported so a navigational element (a Next.js
+ * `<Link>`, which renders an `<a>`) can look like a button WITHOUT nesting a
+ * `<button>` inside an `<a>` (invalid, interactive-in-interactive HTML). Use
+ * this for links that act as calls to action; use `<Button>` for real actions.
+ */
+export function buttonClassName(options?: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  className?: string;
+}): string {
+  const {
+    variant = "primary",
+    size = "md",
+    fullWidth = false,
+    className,
+  } = options ?? {};
+  return cn(
+    base,
+    variants[variant],
+    sizes[size],
+    fullWidth && "w-full",
+    className,
+  );
+}
+
+/**
  * The core action control. Universal component — renders on the server, and
  * works with client handlers when composed inside a Client Component.
  */
@@ -64,13 +91,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={cn(
-        base,
-        variants[variant],
-        sizes[size],
-        fullWidth && "w-full",
-        className,
-      )}
+      className={buttonClassName({ variant, size, fullWidth, className })}
       {...props}
     >
       {leading ? (
