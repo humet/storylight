@@ -20,6 +20,13 @@ import type { VisualCharacterService } from "../visual-character-service";
  * `familyId` (the row already records who started it in which family), so the
  * service RE-AUTHORISES `character:manage` against live membership — defence in
  * depth, and no need to snapshot roles into the payload.
+ *
+ * IDEMPOTENCY (the pattern every M6+ paid stage copies): the handler passes a
+ * stable `idempotencyKey = ${workflowId}:${stageKey}` so candidate-set/asset ids
+ * are DERIVED deterministically. A crash-and-retry (WDK replay, lease reclaim)
+ * before the stage output was persisted therefore reproduces the SAME ids/keys —
+ * the repository insert is `onConflictDoNothing` and the storage put overwrites
+ * identical bytes — instead of minting a duplicate quarantined set.
  */
 
 export const GENERATE_CHARACTER_CANDIDATES_TYPE =
@@ -52,7 +59,7 @@ export function createGenerateCharacterCandidatesWorkflow(
         key: "paint-candidates",
         label: "Painting the first set of options",
         run: async (ctx): Promise<StageResult> => {
-          const { execution, input } = ctx;
+          const { execution, input, stageKey } = ctx;
           const command = input as GenerateCandidatesInput;
           // Reconstruct the actor from the durable row. `authorizeFamilyAction`
           // reads the role from live membership, so `roles` here is unused —
@@ -65,6 +72,9 @@ export function createGenerateCharacterCandidatesWorkflow(
           const sets = await deps.visualCharacterService.requestCandidateSets(
             actor,
             command,
+            // Stable per (workflow run, stage): makes the paid side effect
+            // idempotent across a crash/replay.
+            { idempotencyKey: `${execution.id}:${stageKey}` },
           );
           return { output: { candidateSetIds: sets.map((s) => s.id) } };
         },

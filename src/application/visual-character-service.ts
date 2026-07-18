@@ -2,6 +2,7 @@ import type { AuthenticatedActor } from "@/domain/actor";
 import type { FamilyCapability } from "@/domain/authorization";
 import { buildCharacterVisualDescriptor } from "@/domain/character-visual-descriptor";
 import { assertDecodableImage } from "@/domain/image-validation";
+import { nameBasedUuid } from "@/domain/name-uuid";
 import { orderByReferenceView, REFERENCE_VIEWS } from "@/domain/reference-view";
 import { buildVisualAssetKey } from "@/domain/storage-keys";
 import {
@@ -57,6 +58,19 @@ export interface VisualCharacterDeps {
 
 /** Kind of delivery a caller is authorised for — sets the allowed asset state. */
 export type DeliveryKind = "approved" | "candidate";
+
+/** Options for {@link VisualCharacterService.requestCandidateSets}. */
+export interface RequestCandidatesOptions {
+  /**
+   * A STABLE key (e.g. `${workflowId}:${stageKey}`) under which this generation
+   * runs. When present, every candidate-set id, asset id, and seed is DERIVED
+   * deterministically from it, so a crash-and-retry of the same workflow stage
+   * reproduces the exact same ids/keys/bytes instead of minting a duplicate
+   * quarantined set (a duplicated paid generation in M6). When absent (a direct,
+   * non-durable call) ids stay random, preserving the original behaviour.
+   */
+  idempotencyKey?: string;
+}
 
 export interface DeliveredAsset {
   bytes: Uint8Array;
@@ -149,6 +163,7 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
     async requestCandidateSets(
       actor: AuthenticatedActor,
       input: unknown,
+      options: RequestCandidatesOptions = {},
     ): Promise<CandidateSet[]> {
       const familyId = await authorise(actor, "character:manage");
       const { characterId, setCount } =
@@ -175,13 +190,21 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
           characterId,
         )) + 1;
 
+      const { idempotencyKey } = options;
       const created: CandidateSet[] = [];
       for (let setIndex = 0; setIndex < setCount; setIndex++) {
-        const candidateSetId = globalThis.crypto.randomUUID();
+        // Deterministic under a durable workflow (idempotent re-run), random
+        // otherwise. The id itself carries the determinism, so downstream seeds
+        // and storage keys (derived from it) follow automatically.
+        const candidateSetId = idempotencyKey
+          ? await nameBasedUuid(idempotencyKey, "set", String(setIndex))
+          : globalThis.crypto.randomUUID();
         const assets: NewVisualAsset[] = [];
 
         for (const view of REFERENCE_VIEWS) {
-          const assetId = globalThis.crypto.randomUUID();
+          const assetId = idempotencyKey
+            ? await nameBasedUuid(candidateSetId, "asset", view)
+            : globalThis.crypto.randomUUID();
           const seed = seedFrom(candidateSetId, view);
           const image = await imageModel.generate({
             view,
@@ -365,6 +388,22 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
           ? isDeliverable(asset.state)
           : asset.state === "quarantined";
       if (!permitted) return null;
+
+      // Defence in depth for reader delivery: an approved asset must also belong
+      // to the character's CURRENT visual profile. Re-approval retires the prior
+      // version's assets, but this second gate means a superseded reference id
+      // 404s even if that transition were ever missed (domain rule 6/8: readers
+      // only ever see the current approved reference set).
+      if (kind === "approved") {
+        const currentProfileId =
+          await visualAssetRepository.getCurrentVisualProfileId(
+            familyId,
+            characterId,
+          );
+        if (!currentProfileId || asset.visualProfileId !== currentProfileId) {
+          return null;
+        }
+      }
 
       const object = await objectStorage.read(asset.storageKey);
       if (!object) return null;

@@ -21,32 +21,52 @@ import { createWorkflowRuntime } from "./workflow-runtime";
  * DB-backed engine directly, which is what actually matters.
  */
 
+/**
+ * How long to wait before re-attempting a CLAIM-LOCKED workflow. It matches the
+ * engine's default lease (visibility timeout), so a crashed holder's lease has
+ * expired by the time this drive retries and can reclaim the run — the same
+ * semantics as `runToCompletion({ onLocked: "wait" })`, expressed here per-step
+ * so each stage keeps its own durable checkpoint.
+ */
+const LEASE_RETRY_MS = 60_000;
+
 /** A single durable step: run exactly one stage of the engine. */
 async function runOneStage(
   workflowId: string,
-  leaseOwner: string,
-): Promise<{ done: boolean; backoffMs: number }> {
+): Promise<{ done: boolean; sleepMs: number }> {
   "use step";
+  // UNIQUE lease token PER DRIVE ATTEMPT. The engine's guarded writes match on
+  // `WHERE lease_owner = :token`, so a constant token (the old `wdk:${id}`) let a
+  // STALE drive commit an advance after a NEW drive had reclaimed the lease — a
+  // double-advance. A per-attempt uuid means only the drive that currently holds
+  // the lease can write; a reclaimed stale drive's writes no-op. The uuid is
+  // generated inside this durable step, so a replay reuses the persisted token.
+  const leaseOwner = `wdk:${workflowId}:${globalThis.crypto.randomUUID()}`;
   const { engine } = await createWorkflowRuntime();
   const outcome = await engine.runNextStage(workflowId, leaseOwner);
   switch (outcome.kind) {
     case "retry":
-      return { done: false, backoffMs: outcome.backoffMs };
+      return { done: false, sleepMs: outcome.backoffMs };
     case "advanced":
-      return { done: false, backoffMs: 0 };
-    // completed / failed / terminal / locked — nothing more for this drive to do.
+      return { done: false, sleepMs: 0 };
+    case "locked":
+      // Held by another (possibly crashed) drive's live lease. Do NOT exit —
+      // wait until the lease can expire, then retry and reclaim. Exiting here
+      // (the old behaviour) stranded a replayed run forever inside the lease
+      // window: `running`, lease expiring, and nothing left to re-drive it.
+      return { done: false, sleepMs: LEASE_RETRY_MS };
+    // completed / failed / terminal — the run is finished; stop the loop.
     default:
-      return { done: true, backoffMs: 0 };
+      return { done: true, sleepMs: 0 };
   }
 }
 
-/** The durable driver: advance stages until the workflow is terminal. */
+/** The durable driver: advance stages until the workflow is TERMINAL. */
 export async function driveWorkflowRun(workflowId: string): Promise<void> {
   "use workflow";
-  const leaseOwner = `wdk:${workflowId}`;
   for (;;) {
-    const { done, backoffMs } = await runOneStage(workflowId, leaseOwner);
+    const { done, sleepMs } = await runOneStage(workflowId);
     if (done) return;
-    if (backoffMs > 0) await sleep(backoffMs);
+    if (sleepMs > 0) await sleep(sleepMs);
   }
 }

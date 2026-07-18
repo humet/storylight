@@ -6,6 +6,7 @@ import type {
   VisualAssetRepository,
 } from "@/application/ports/visual-asset-repository";
 import { orderByReferenceView } from "@/domain/reference-view";
+import { applyVisualAssetTransition } from "@/domain/visual-asset-state";
 import type {
   CandidateAssetSummary,
   CandidateSet,
@@ -14,6 +15,7 @@ import type {
   VisualAssetState,
   VisualProfile,
 } from "@/domain/visual-asset";
+import { invalidCommandError } from "@/lib/errors";
 import type { Database } from "../client";
 import {
   characterReferenceAssets,
@@ -52,6 +54,19 @@ function toAsset(row: AssetRow): VisualAsset {
     createdAt: row.createdAt,
     reviewedAt: row.reviewedAt ?? undefined,
   };
+}
+
+/**
+ * True for the Postgres errors a concurrent approval can lose on: unique
+ * violation (`23505` — two winners racing to mint the same profile version),
+ * serialization failure (`40001`), or deadlock (`40P01` — the mutual
+ * sibling-reject `FOR UPDATE`). These are the "you lost the race" class, mapped
+ * to a safe domain error rather than a 500.
+ */
+function isApprovalConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "23505" || code === "40001" || code === "40P01";
 }
 
 function toProfile(row: ProfileRow): VisualProfile {
@@ -111,7 +126,13 @@ export function createVisualAssetRepository(
     },
 
     async recordCandidateSet(input: RecordCandidateSetInput) {
-      const rows = await db
+      // IDEMPOTENT insert: a durable stage that crashes after this commit but
+      // before its stage output is persisted re-runs with the SAME (deterministic)
+      // asset ids — `onConflictDoNothing` on the PK collapses the re-insert to a
+      // no-op instead of a duplicate set. We then re-read the set by its id so the
+      // return value is correct whether this call inserted the rows or found them
+      // already present (a full conflict returns nothing from `.returning()`).
+      await db
         .insert(visualAssets)
         .values(
           input.assets.map((asset) => ({
@@ -131,7 +152,18 @@ export function createVisualAssetRepository(
             seed: asset.seed,
           })),
         )
-        .returning();
+        .onConflictDoNothing({ target: visualAssets.id });
+
+      const rows = await db
+        .select()
+        .from(visualAssets)
+        .where(
+          and(
+            eq(visualAssets.familyId, input.familyId),
+            eq(visualAssets.characterId, input.characterId),
+            eq(visualAssets.candidateSetId, input.candidateSetId),
+          ),
+        );
       return groupIntoSets(input.characterId, rows)[0];
     },
 
@@ -169,98 +201,133 @@ export function createVisualAssetRepository(
     },
 
     async approveCandidateSet(input: ApproveCandidateSetInput) {
-      return db.transaction(async (tx) => {
-        // The set must be a QUARANTINED set of this character in this family.
-        const quarantined = await tx
-          .select()
-          .from(visualAssets)
-          .where(
-            and(
-              eq(visualAssets.familyId, input.familyId),
-              eq(visualAssets.characterId, input.characterId),
-              eq(visualAssets.candidateSetId, input.candidateSetId),
-              eq(visualAssets.state, "quarantined"),
-            ),
-          )
-          .for("update");
-        if (quarantined.length === 0) return null;
+      try {
+        return await db.transaction(async (tx) => {
+          // The set must be a QUARANTINED set of this character in this family.
+          const quarantined = await tx
+            .select()
+            .from(visualAssets)
+            .where(
+              and(
+                eq(visualAssets.familyId, input.familyId),
+                eq(visualAssets.characterId, input.characterId),
+                eq(visualAssets.candidateSetId, input.candidateSetId),
+                eq(visualAssets.state, "quarantined"),
+              ),
+            )
+            .for("update");
+          if (quarantined.length === 0) return null;
 
-        // Next immutable version = (current max for this character) + 1.
-        const [latest] = await tx
-          .select({ version: visualProfiles.version })
-          .from(visualProfiles)
-          .where(eq(visualProfiles.characterId, input.characterId))
-          .orderBy(desc(visualProfiles.version))
-          .limit(1);
-        const nextVersion = (latest?.version ?? 0) + 1;
+          const now = new Date();
 
-        const now = new Date();
-        const [profile] = await tx
-          .insert(visualProfiles)
-          .values({
-            familyId: input.familyId,
-            characterId: input.characterId,
-            version: nextVersion,
-            artBibleVersion: input.artBibleVersion,
-            approvedAt: now,
-          })
-          .returning();
+          // RETIRE the previous version's approved assets FIRST (before the new set
+          // is approved, so they aren't caught by the state filter). Superseded
+          // reference bytes must stop being deliverable — leaving them `approved`
+          // let an old asset id keep streaming forever (domain rule 5 immutability
+          // is about the ROWS; deliverability is a lifecycle state). The pure
+          // transition function is the source of truth for the target state.
+          const retiredState = applyVisualAssetTransition("approved", "retire");
+          await tx
+            .update(visualAssets)
+            .set({ state: retiredState, reviewedAt: now })
+            .where(
+              and(
+                eq(visualAssets.familyId, input.familyId),
+                eq(visualAssets.characterId, input.characterId),
+                eq(visualAssets.state, "approved"),
+              ),
+            );
 
-        // Approve exactly this set's assets and attach them to the new profile.
-        await tx
-          .update(visualAssets)
-          .set({
-            state: "approved",
-            visualProfileId: profile.id,
-            reviewedAt: now,
-          })
-          .where(
-            and(
-              eq(visualAssets.familyId, input.familyId),
-              eq(visualAssets.characterId, input.characterId),
-              eq(visualAssets.candidateSetId, input.candidateSetId),
-              eq(visualAssets.state, "quarantined"),
-            ),
+          // Next immutable version = (current max for this character) + 1.
+          const [latest] = await tx
+            .select({ version: visualProfiles.version })
+            .from(visualProfiles)
+            .where(eq(visualProfiles.characterId, input.characterId))
+            .orderBy(desc(visualProfiles.version))
+            .limit(1);
+          const nextVersion = (latest?.version ?? 0) + 1;
+
+          const [profile] = await tx
+            .insert(visualProfiles)
+            .values({
+              familyId: input.familyId,
+              characterId: input.characterId,
+              version: nextVersion,
+              artBibleVersion: input.artBibleVersion,
+              approvedAt: now,
+            })
+            .returning();
+
+          // Approve exactly this set's assets and attach them to the new profile.
+          await tx
+            .update(visualAssets)
+            .set({
+              state: "approved",
+              visualProfileId: profile.id,
+              reviewedAt: now,
+            })
+            .where(
+              and(
+                eq(visualAssets.familyId, input.familyId),
+                eq(visualAssets.characterId, input.characterId),
+                eq(visualAssets.candidateSetId, input.candidateSetId),
+                eq(visualAssets.state, "quarantined"),
+              ),
+            );
+
+          // Link the ordered reference set.
+          await tx.insert(characterReferenceAssets).values(
+            input.orderedAssets.map((asset) => ({
+              familyId: input.familyId,
+              visualProfileId: profile.id,
+              assetId: asset.assetId,
+              view: asset.view,
+              position: asset.position,
+            })),
           );
 
-        // Link the ordered reference set.
-        await tx.insert(characterReferenceAssets).values(
-          input.orderedAssets.map((asset) => ({
-            familyId: input.familyId,
-            visualProfileId: profile.id,
-            assetId: asset.assetId,
-            view: asset.view,
-            position: asset.position,
-          })),
-        );
+          // Reject every OTHER quarantined set for this character — the parent chose
+          // this one, so the alternatives are superseded and must stay unreachable.
+          await tx
+            .update(visualAssets)
+            .set({ state: "rejected", reviewedAt: now })
+            .where(
+              and(
+                eq(visualAssets.familyId, input.familyId),
+                eq(visualAssets.characterId, input.characterId),
+                eq(visualAssets.state, "quarantined"),
+                ne(visualAssets.candidateSetId, input.candidateSetId),
+              ),
+            );
 
-        // Reject every OTHER quarantined set for this character — the parent chose
-        // this one, so the alternatives are superseded and must stay unreachable.
-        await tx
-          .update(visualAssets)
-          .set({ state: "rejected", reviewedAt: now })
-          .where(
-            and(
-              eq(visualAssets.familyId, input.familyId),
-              eq(visualAssets.characterId, input.characterId),
-              eq(visualAssets.state, "quarantined"),
-              ne(visualAssets.candidateSetId, input.candidateSetId),
-            ),
-          );
+          // Repoint the character at its new current visual profile.
+          await tx
+            .update(childCharacters)
+            .set({ visualProfileId: profile.id, updatedAt: now })
+            .where(
+              and(
+                eq(childCharacters.id, input.characterId),
+                eq(childCharacters.familyId, input.familyId),
+              ),
+            );
 
-        // Repoint the character at its new current visual profile.
-        await tx
-          .update(childCharacters)
-          .set({ visualProfileId: profile.id, updatedAt: now })
-          .where(
-            and(
-              eq(childCharacters.id, input.characterId),
-              eq(childCharacters.familyId, input.familyId),
-            ),
-          );
-
-        return toProfile(profile);
-      });
+          return toProfile(profile);
+        });
+      } catch (error) {
+        // Concurrent approval of two DIFFERENT sets can race on the
+        // `UNIQUE(character_id, version)` insert or DEADLOCK on the mutual
+        // sibling-reject `FOR UPDATE`. Surface a safe domain error to the loser
+        // instead of an unhandled 500 — the parent simply lost the race.
+        if (isApprovalConflict(error)) {
+          throw invalidCommandError({
+            safeMessage:
+              "This candidate set is no longer available to approve.",
+            internalDetail: `Concurrent approval conflict for set ${input.candidateSetId} (character ${input.characterId}): ${String(error)}`,
+            stage: "visual.approve",
+          });
+        }
+        throw error;
+      }
     },
 
     async rejectCandidateSet({ familyId, characterId, candidateSetId }) {
@@ -277,6 +344,20 @@ export function createVisualAssetRepository(
         )
         .returning({ id: visualAssets.id });
       return rejected.length > 0;
+    },
+
+    async getCurrentVisualProfileId(familyId, characterId) {
+      const [character] = await db
+        .select({ visualProfileId: childCharacters.visualProfileId })
+        .from(childCharacters)
+        .where(
+          and(
+            eq(childCharacters.id, characterId),
+            eq(childCharacters.familyId, familyId),
+          ),
+        )
+        .limit(1);
+      return character?.visualProfileId ?? null;
     },
 
     async getApprovedReferenceSet(

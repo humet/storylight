@@ -271,6 +271,73 @@ describe("approving a reference set", () => {
     expect(readBack?.visualProfileId).toBe(v2.id);
   });
 
+  it("retires the previous version's assets and 404s their ids after re-approval (Finding 4)", async () => {
+    const user = await seedUser("owner-retire");
+    const familyId = await seedFamily(user, "Retirers");
+    const actor = ownerActor(user, familyId);
+    const character = await newCharacter(actor, "Rosa");
+
+    const first = await visual.requestCandidateSets(actor, {
+      characterId: character.id,
+      setCount: 1,
+    });
+    const v1 = await visual.approveCandidateSet(actor, {
+      characterId: character.id,
+      candidateSetId: first[0].id,
+    });
+    const v1Refs = await visual.getApprovedReferenceSet(actor, character.id);
+    const v1AssetId = v1Refs[0].id;
+    // v1 is deliverable while it is the current profile.
+    expect(
+      await visual.resolveDeliverableAsset(
+        actor,
+        character.id,
+        v1AssetId,
+        "approved",
+      ),
+    ).not.toBeNull();
+
+    // Re-approve a fresh set → mints v2 and SUPERSEDES v1.
+    const second = await visual.requestCandidateSets(actor, {
+      characterId: character.id,
+      setCount: 1,
+    });
+    const v2 = await visual.approveCandidateSet(actor, {
+      characterId: character.id,
+      candidateSetId: second[0].id,
+    });
+    expect(v2.version).toBe(2);
+    expect(v2.id).not.toBe(v1.id);
+
+    // The v1 asset is now RETIRED and unreachable on the delivery path.
+    const retired = await visualRepo.getAsset(
+      familyId,
+      character.id,
+      v1AssetId,
+    );
+    expect(retired?.state).toBe("retired");
+    expect(
+      await visual.resolveDeliverableAsset(
+        actor,
+        character.id,
+        v1AssetId,
+        "approved",
+      ),
+    ).toBeNull();
+
+    // The current (v2) reference set streams fine.
+    const v2Refs = await visual.getApprovedReferenceSet(actor, character.id);
+    expect(v2Refs).toHaveLength(6);
+    const streamed = await visual.resolveDeliverableAsset(
+      actor,
+      character.id,
+      v2Refs[0].id,
+      "approved",
+    );
+    expect(streamed).not.toBeNull();
+    expect(streamed!.bytes.byteLength).toBeGreaterThan(0);
+  });
+
   it("cannot approve an already-reviewed set twice", async () => {
     const user = await seedUser("owner-twice");
     const familyId = await seedFamily(user, "Twice");
@@ -331,6 +398,51 @@ describe("explicit rejection", () => {
         "approved",
       ),
     ).toBeNull();
+  });
+});
+
+describe("concurrent approval (Finding 3)", () => {
+  it("lets one win, returns a safe domain error to the loser, mints exactly one version", async () => {
+    const user = await seedUser("owner-race");
+    const familyId = await seedFamily(user, "Racers");
+    const actor = ownerActor(user, familyId);
+    const character = await newCharacter(actor, "Rosa");
+
+    const sets = await visual.requestCandidateSets(actor, {
+      characterId: character.id,
+      setCount: 2,
+    });
+
+    // Two parents approve two DIFFERENT sets at the same moment.
+    const [a, b] = await Promise.allSettled([
+      visual.approveCandidateSet(actor, {
+        characterId: character.id,
+        candidateSetId: sets[0].id,
+      }),
+      visual.approveCandidateSet(actor, {
+        characterId: character.id,
+        candidateSetId: sets[1].id,
+      }),
+    ]);
+
+    const fulfilled = [a, b].filter((r) => r.status === "fulfilled");
+    const rejected = [a, b].filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected",
+    );
+    // Exactly one approval succeeds; the loser fails SAFELY (never a raw 500).
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const reason = rejected[0].reason;
+    expect(isDomainError(reason) && reason.code === "INVALID_COMMAND").toBe(
+      true,
+    );
+
+    // Exactly one visual-profile version was minted.
+    const latest = await visualRepo.getLatestVisualProfileVersion(
+      familyId,
+      character.id,
+    );
+    expect(latest).toBe(1);
   });
 });
 

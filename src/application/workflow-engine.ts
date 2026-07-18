@@ -44,10 +44,21 @@ import type {
  * directly.
  */
 
-/** Context handed to a stage handler. `input` is the workflow's stored command. */
+/**
+ * Context handed to a stage handler. `input` is the workflow's stored command.
+ *
+ * IDEMPOTENCY CONTRACT (M6+ copy this): a stage handler MUST be safe to run more
+ * than once for the same `(execution.id, stageKey)` — a crash or lease reclaim
+ * can re-invoke it before its output was persisted. Any side effect (a DB row, a
+ * storage put, a paid generation) must therefore be keyed DETERMINISTICALLY from
+ * `(execution.id, stageKey, …)` — see `nameBasedUuid` — and written idempotently
+ * (`onConflictDoNothing` / same-key overwrite), never with a fresh random id.
+ */
 export interface StageContext {
   execution: WorkflowExecution;
   input: unknown;
+  /** This stage's key — the deterministic idempotency anchor for side effects. */
+  stageKey: string;
   /** Attempts already made against this stage (0 on the first run). */
   attempt: number;
   /** Read a prior stage's persisted output (for stages that build on earlier ones). */
@@ -137,6 +148,20 @@ export interface RunToCompletionOptions {
   maxStages?: number;
   /** Lease owner token for this drive (defaults to a random uuid). */
   leaseOwner?: string;
+  /**
+   * What to do when the next stage is CLAIM-LOCKED by another live lease:
+   *  - `"stop"` (default): return stopped — safe for the IN-PROCESS dispatcher,
+   *    where the lease holder is a live sibling promise that will finish the run.
+   *  - `"wait"`: sleep (~one lease duration) and RETRY the claim until the lease
+   *    expires and this drive can reclaim it. This mirrors the WDK driver, whose
+   *    replay may be the ONLY driver alive — so a crashed holder's workflow must
+   *    NOT be abandoned just because its lease has not yet expired.
+   */
+  onLocked?: "stop" | "wait";
+  /** Sleep before retrying a locked claim (default: one lease duration). */
+  lockedBackoffMs?: number;
+  /** Bound on locked-claim retries so a stuck lease can't spin forever. */
+  maxLockedWaits?: number;
 }
 
 export interface WorkflowEngineDeps {
@@ -253,6 +278,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       const result = await stage.run({
         execution: claimed,
         input: claimed.input,
+        stageKey: stage.key,
         attempt: claimed.attempt,
         getStageOutput: async (key) =>
           (await repo.getStageOutput(workflowId, key))?.output,
@@ -317,7 +343,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
   ): Promise<DriveResult> {
     const sleep = options.sleep ?? realSleep;
     const leaseOwner = options.leaseOwner ?? globalThis.crypto.randomUUID();
+    const lockedBackoffMs = options.lockedBackoffMs ?? leaseMs;
+    const maxLockedWaits = options.maxLockedWaits ?? 1_000;
     let stagesRun = 0;
+    let lockedWaits = 0;
     let lastError: WorkflowError | undefined;
 
     for (;;) {
@@ -344,6 +373,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       switch (outcome.kind) {
         case "advanced":
           stagesRun += 1;
+          lockedWaits = 0; // progress made — the locked budget refreshes
           continue;
         case "completed":
           stagesRun += 1;
@@ -367,6 +397,15 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
             lastError,
           };
         case "locked":
+          // Another drive holds a live lease. In "wait" mode (the WDK driver)
+          // sleep near the lease duration and retry the claim — the holder may
+          // have crashed, so we must reclaim on expiry rather than abandon the
+          // run. In "stop" mode (in-process) the live sibling finishes it.
+          if (options.onLocked === "wait" && lockedWaits < maxLockedWaits) {
+            lockedWaits += 1;
+            await sleep(lockedBackoffMs);
+            continue;
+          }
           return {
             finalStatus: "running",
             stagesRun,

@@ -114,6 +114,17 @@ export interface VisualAssetRepository {
   }): Promise<boolean>;
 
   /**
+   * The id of the character's CURRENT visual profile
+   * (`child_characters.visual_profile_id`), or null when it has no approved
+   * profile. Used by delivery to reject a superseded (retired) asset id even if a
+   * retire transition were ever missed — defence in depth.
+   */
+  getCurrentVisualProfileId(
+    familyId: string,
+    characterId: string,
+  ): Promise<string | null>;
+
+  /**
    * The character's CURRENT approved reference set (the assets linked to the
    * visual profile version `child_characters.visual_profile_id` points at),
    * ordered by position. Empty when the character has no approved profile.

@@ -32,7 +32,7 @@ import { createCharacterRepository } from "./repositories/character-repository";
 import { createFamilyRepository } from "./repositories/family-repository";
 import { createVisualAssetRepository } from "./repositories/visual-asset-repository";
 import { createWorkflowRepository } from "./repositories/workflow-repository";
-import { users, workflowExecutions } from "./schema";
+import { users, workflowExecutions, workflowStageOutputs } from "./schema";
 import { createTestDatabase, type TestDatabase } from "./testing";
 
 /**
@@ -406,6 +406,146 @@ describe("concurrency guard (lease)", () => {
   });
 });
 
+describe("lease ownership under the WDK per-drive token (Finding 1)", () => {
+  it("a stale drive cannot advance after a NEW token reclaims the expired lease", async () => {
+    const user = await seedUser("stale-owner");
+    const familyId = await seedFamily(user, "Stale");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "stale-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    // Two DISTINCT WDK-format tokens for the SAME workflow (the fix: a unique
+    // uuid per drive attempt instead of a constant `wdk:${id}`).
+    const tokenA = `wdk:${execution.id}:${crypto.randomUUID()}`;
+    const tokenB = `wdk:${execution.id}:${crypto.randomUUID()}`;
+    expect(tokenA).not.toBe(tokenB);
+
+    // Drive A claims and holds the lease.
+    const claimedA = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: tokenA,
+      leaseMs: 60_000,
+    });
+    expect(claimedA).not.toBeNull();
+
+    // Drive B reclaims after A's lease expires (A "crashed").
+    const claimedB = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: tokenB,
+      leaseMs: 60_000,
+      now: new Date(Date.now() + 120_000),
+    });
+    expect(claimedB?.leaseOwner).toBe(tokenB);
+
+    // The STALE drive A now tries to commit its advance. With a per-drive token
+    // its guarded write matches nothing — it must NOT steal the lease or advance.
+    // (Under the old constant token, A's token == B's token, so this DID commit.)
+    await repo.completeStage({
+      workflowId: execution.id,
+      leaseOwner: tokenA,
+      stageKey: SYNTHETIC_STAGE_KEYS[0],
+      output: { byStaleDrive: true },
+      attempt: 0,
+      nextStage: SYNTHETIC_STAGE_KEYS[1],
+      nextStatus: "waiting",
+    });
+
+    const after = await repo.getExecutionById(execution.id);
+    expect(after?.leaseOwner).toBe(tokenB); // still B's lease
+    expect(after?.currentStage).toBe(SYNTHETIC_STAGE_KEYS[0]); // NOT advanced by A
+    expect(after?.status).toBe("running"); // still B's active claim
+  });
+});
+
+describe("locked drive retries rather than exits (Finding 1)", () => {
+  function syntheticRegistry(): WorkflowRegistry {
+    return {
+      [SYNTHETIC_WORKFLOW_TYPE]: asWorkflowDefinition(
+        createSyntheticWorkflowDefinition(),
+      ),
+    };
+  }
+
+  it("waits for an expiring lease and reclaims instead of abandoning the run", async () => {
+    const user = await seedUser("wait-owner");
+    const familyId = await seedFamily(user, "Waiters");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "wait-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    const base = Date.now();
+    // A live lease held by a (crashed) holder — expires at base + 60s.
+    const held = await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "holder",
+      leaseMs: 60_000,
+      now: new Date(base),
+    });
+    expect(held).not.toBeNull();
+
+    let clockMs = base + 1_000; // holder lease still live on the first attempt
+    const engine = createWorkflowEngine({
+      repo,
+      registry: syntheticRegistry(),
+      now: () => new Date(clockMs),
+    });
+    // Each locked wait advances the clock past the lease so the retry reclaims.
+    const advancingSleep = async () => {
+      clockMs += 120_000;
+    };
+
+    const drive = await engine.runToCompletion(execution.id, {
+      onLocked: "wait",
+      sleep: advancingSleep,
+      lockedBackoffMs: 60_000,
+    });
+    // It did NOT exit at the first locked claim — it waited, reclaimed, finished.
+    expect(drive.finalStatus).toBe("completed");
+  });
+
+  it("default onLocked STOPS (the in-process holder is a live sibling)", async () => {
+    const user = await seedUser("stop-owner");
+    const familyId = await seedFamily(user, "Stoppers");
+    const repo = createWorkflowRepository(db);
+    const { execution } = await repo.createOrGetExecution({
+      familyId,
+      userId: user,
+      type: SYNTHETIC_WORKFLOW_TYPE,
+      requestId: "stop-1",
+      input: {},
+      initialStage: SYNTHETIC_STAGE_KEYS[0],
+    });
+
+    await repo.claim({
+      workflowId: execution.id,
+      leaseOwner: "holder",
+      leaseMs: 60_000,
+    });
+
+    const engine = createWorkflowEngine({
+      repo,
+      registry: syntheticRegistry(),
+    });
+    const drive = await engine.runToCompletion(execution.id, {
+      sleep: instantSleep,
+    });
+    expect(drive.stopped).toBe(true);
+    expect(drive.finalStatus).toBe("running");
+  });
+});
+
 describe("client-safe status view + family scoping", () => {
   it("returns parent-friendly labels and hides other families' workflows", async () => {
     const userA = await seedUser("status-a");
@@ -510,6 +650,88 @@ describe("real consumer: generate character candidates on the engine", () => {
         character.id,
       );
       expect(view?.isComplete).toBe(true);
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("re-running the stage after a lost output does NOT duplicate the set (Finding 2 idempotency)", async () => {
+    const storageRoot = await mkdtemp(path.join(tmpdir(), "storylight-wf-"));
+    try {
+      const user = await seedUser("idem-owner");
+      const familyId = await seedFamily(user, "Idempotent");
+      const actor = ownerActor(user, familyId);
+
+      const characterRepo = createCharacterRepository(db);
+      const visualRepo = createVisualAssetRepository(db);
+      const workflowRepo = createWorkflowRepository(db);
+      const commands = createCharacterCommands({
+        familyRepository: familyRepo,
+        characterRepository: characterRepo,
+      });
+      const character = await commands.createCharacterProfile(
+        actor,
+        payload("Rosa"),
+      );
+
+      const visualCharacterService = createVisualCharacterService({
+        familyRepository: familyRepo,
+        characterRepository: characterRepo,
+        visualAssetRepository: visualRepo,
+        objectStorage: createFilesystemObjectStorage(storageRoot),
+        imageModel: createFakeImageModel(),
+      });
+      const registry = createWorkflowRegistry({ visualCharacterService });
+      const engine = createWorkflowEngine({ repo: workflowRepo, registry });
+      const service = createWorkflowService({
+        familyRepository: familyRepo,
+        workflowRepository: workflowRepo,
+        registry,
+        dispatcher: recordingDispatcher(),
+      });
+
+      const handle = await service.startWorkflow(
+        actor,
+        GENERATE_CHARACTER_CANDIDATES_TYPE,
+        `idem-${character.id}`,
+        { characterId: character.id, setCount: 1 },
+      );
+      await engine.runToCompletion(handle.workflowId);
+
+      const afterFirst = await visualCharacterService.listPendingCandidateSets(
+        actor,
+        character.id,
+      );
+      expect(afterFirst).toHaveLength(1);
+
+      // Simulate a crash whose SIDE EFFECT (the candidate set) committed but whose
+      // stage-output write was lost: drop the output and reset the run so the
+      // handler is forced to execute a second time.
+      await db
+        .delete(workflowStageOutputs)
+        .where(eq(workflowStageOutputs.workflowId, handle.workflowId));
+      await db
+        .update(workflowExecutions)
+        .set({
+          status: "waiting",
+          currentStage: "paint-candidates",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          completedAt: null,
+        })
+        .where(eq(workflowExecutions.id, handle.workflowId));
+
+      // Re-drive: the handler re-runs with the SAME deterministic ids.
+      const redrive = await engine.runToCompletion(handle.workflowId);
+      expect(redrive.finalStatus).toBe("completed");
+
+      // Still exactly ONE candidate set — the re-run reproduced it, not a duplicate.
+      const afterSecond = await visualCharacterService.listPendingCandidateSets(
+        actor,
+        character.id,
+      );
+      expect(afterSecond).toHaveLength(1);
+      expect(afterSecond[0].id).toBe(afterFirst[0].id);
     } finally {
       await rm(storageRoot, { recursive: true, force: true });
     }
