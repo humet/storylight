@@ -43,8 +43,9 @@ test("a parent can create, read, and reopen a one-off story", async ({
   await page.getByRole("button", { name: "Next", exact: true }).click(); // choices → start
   await page.getByRole("button", { name: /start tonight's story/i }).click();
 
-  // Progress screen → reader once the workflow completes.
-  await expect(page).toHaveURL(/\/app\/stories\/[0-9a-f-]+\/progress$/);
+  // The progress screen is transient — with the fast dev fixture the workflow
+  // can complete before it ever renders (same cold-start race as the series
+  // spec), so wait only for the reader end-state.
   await page.waitForURL(/\/app\/stories\/[0-9a-f-]+$/, { timeout: 45000 });
 
   const readerUrl = page.url();
