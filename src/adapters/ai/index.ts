@@ -4,23 +4,25 @@ import type {
   LanguageModel,
   LanguageModelRequest,
 } from "@/application/ports/language-model";
-import { getEnv } from "@/lib/env";
+import { getEnv, isDevLikeEnv } from "@/lib/env";
 import { DomainError } from "@/lib/errors";
+import { createDevFixtureLanguageModel } from "./dev-fixture-language-model";
 import { createGatewayLanguageModel } from "./gateway-language-model";
 
 /**
  * Composition-root selection for the {@link LanguageModel} port (mirrors
  * `getDb()` / `getObjectStorage()` / `getImageModel()`):
  *  - `AI_GATEWAY_API_KEY` set → the real gateway adapter;
- *  - otherwise → an UNCONFIGURED model that composes fine but throws a clear,
- *    non-retryable error if actually invoked.
+ *  - else dev/test-like → a context-aware DEV FIXTURE model so the running dev app
+ *    (and the Playwright e2e) publishes a believable one-off story offline
+ *    (mirrors the M4 dev fake image model);
+ *  - otherwise (production without a key) → an UNCONFIGURED model that composes
+ *    fine but throws a clear, non-retryable error if actually invoked.
  *
- * The unconfigured fallback (rather than throwing at construction) matters: the
- * workflow runtime builds the language model eagerly while wiring the registry,
- * and must not fail to compose in dev/test/CI where no key exists. There is no
- * dev fake here — a fake that fabricates schema-valid output is meaningful only
- * per-schema, so TESTS inject `createFakeLanguageModel` directly; nothing invokes
- * a real model in dev/test/CI.
+ * The composing (non-throwing at construction) fallback matters: the workflow
+ * runtime builds the language model eagerly while wiring the registry, and must
+ * not fail to compose where no key exists. UNIT/INTEGRATION tests never use these
+ * — they inject `createFakeLanguageModel` directly with per-case scripts.
  */
 
 function createUnconfiguredLanguageModel(): LanguageModel {
@@ -42,5 +44,8 @@ function createUnconfiguredLanguageModel(): LanguageModel {
 export function getLanguageModel(): LanguageModel {
   const env = getEnv();
   if (env.AI_GATEWAY_API_KEY) return createGatewayLanguageModel();
+  // Dev/test-like without a key → the context-aware fixture model so the running
+  // app publishes a believable story offline (tests inject their own fake).
+  if (isDevLikeEnv(env)) return createDevFixtureLanguageModel();
   return createUnconfiguredLanguageModel();
 }

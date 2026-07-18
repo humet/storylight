@@ -11,7 +11,7 @@ import { expect, test } from "@playwright/test";
 test("a parent paints and approves a character reference set", async ({
   page,
 }, testInfo) => {
-  const email = `painter+${Date.now()}-${testInfo.project.name}@example.com`;
+  const email = `painter+${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${testInfo.project.name}@example.com`;
 
   await page.goto("/sign-up");
   await page.getByLabel("Your name").fill("Test Parent");

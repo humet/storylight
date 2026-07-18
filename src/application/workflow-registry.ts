@@ -1,11 +1,14 @@
 import type { StructuredGenerator } from "./ai/generate-structured";
+import type { CharacterRepository } from "./ports/character-repository";
 import type { GenerationRunRepository } from "./ports/generation-run-repository";
+import type { StoryRepository } from "./ports/story-repository";
 import type { VisualCharacterService } from "./visual-character-service";
 import {
   asWorkflowDefinition,
   type AnyWorkflowDefinition,
   type WorkflowRegistry,
 } from "./workflow-engine";
+import { createCreateOneOffStoryWorkflow } from "./workflows/create-one-off-story-workflow";
 import { createGenerateCharacterCandidatesWorkflow } from "./workflows/generate-character-candidates-workflow";
 import { createStructuredPlanDemoWorkflow } from "./workflows/structured-plan-demo-workflow";
 import { createSyntheticWorkflowDefinition } from "./workflows/synthetic-workflow";
@@ -21,6 +24,13 @@ export interface WorkflowRegistryDeps {
   /** M6 structured-generation pipeline + its persistence, for the demo workflow. */
   structuredGenerator: StructuredGenerator;
   generationRunRepository: GenerationRunRepository;
+  /**
+   * M7 one-off story pipeline dependencies. Optional so tests that only exercise
+   * earlier workflows need not supply them; the one-off workflow is registered
+   * only when BOTH are present.
+   */
+  storyRepository?: StoryRepository;
+  characterRepository?: CharacterRepository;
 }
 
 export function createWorkflowRegistry(
@@ -45,6 +55,21 @@ export function createWorkflowRegistry(
       }),
     ),
   ];
+
+  // M7: the first end-to-end user-facing pipeline — a one-off story. Registered
+  // only when its persistence dependencies are supplied.
+  if (deps.storyRepository && deps.characterRepository) {
+    definitions.push(
+      asWorkflowDefinition(
+        createCreateOneOffStoryWorkflow({
+          structuredGenerator: deps.structuredGenerator,
+          generationRunRepository: deps.generationRunRepository,
+          storyRepository: deps.storyRepository,
+          characterRepository: deps.characterRepository,
+        }),
+      ),
+    );
+  }
 
   return Object.fromEntries(definitions.map((def) => [def.type, def]));
 }

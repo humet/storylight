@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
 test("signing up creates a session and reaches the app shell", async ({
   page,
 }, testInfo) => {
-  const email = `parent+${Date.now()}-${testInfo.project.name}@example.com`;
+  const email = `parent+${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${testInfo.project.name}@example.com`;
 
   await page.goto("/sign-up");
   await page.getByLabel("Your name").fill("Test Parent");
@@ -18,13 +18,13 @@ test("signing up creates a session and reaches the app shell", async ({
 
   await expect(page).toHaveURL(/\/app$/);
   await expect(
-    page.getByRole("heading", { name: /your family library/i }),
+    page.getByRole("heading", { level: 1, name: "Your family library" }),
   ).toBeVisible();
 
   // The authenticated session survives a fresh navigation to the shell.
   await page.goto("/app");
   await expect(page).toHaveURL(/\/app$/);
   await expect(
-    page.getByRole("heading", { name: /your family library/i }),
+    page.getByRole("heading", { level: 1, name: "Your family library" }),
   ).toBeVisible();
 });

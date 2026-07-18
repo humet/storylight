@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test";
 test("a parent can create and approve a character from the mobile flow", async ({
   page,
 }, testInfo) => {
-  const email = `parent+${Date.now()}-${testInfo.project.name}@example.com`;
+  const email = `parent+${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${testInfo.project.name}@example.com`;
 
   await page.goto("/sign-up");
   await page.getByLabel("Your name").fill("Test Parent");

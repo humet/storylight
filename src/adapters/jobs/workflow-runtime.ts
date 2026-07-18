@@ -20,6 +20,7 @@ import { createCharacterRepository } from "@/db/repositories/character-repositor
 import { createFamilyRepository } from "@/db/repositories/family-repository";
 import { createGenerationRunRepository } from "@/db/repositories/generation-run-repository";
 import { createModelRouteRepository } from "@/db/repositories/model-route-repository";
+import { createStoryRepository } from "@/db/repositories/story-repository";
 import { createVisualAssetRepository } from "@/db/repositories/visual-asset-repository";
 import { createWorkflowRepository } from "@/db/repositories/workflow-repository";
 
@@ -44,10 +45,12 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
   const db = await getDb();
   const familyRepository = createFamilyRepository(db);
   const workflowRepository = createWorkflowRepository(db);
+  const characterRepository = createCharacterRepository(db);
+  const storyRepository = createStoryRepository(db);
 
   const visualCharacterService = createVisualCharacterService({
     familyRepository,
-    characterRepository: createCharacterRepository(db),
+    characterRepository,
     visualAssetRepository: createVisualAssetRepository(db),
     objectStorage: await getObjectStorage(),
     imageModel: getImageModel(),
@@ -66,6 +69,8 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
     visualCharacterService,
     structuredGenerator,
     generationRunRepository,
+    storyRepository,
+    characterRepository,
   });
   const engine = createWorkflowEngine({ repo: workflowRepository, registry });
 
