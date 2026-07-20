@@ -2,11 +2,8 @@ import {
   APICallError,
   createGateway,
   generateText,
-  NoObjectGeneratedError,
-  Output,
   type ModelMessage,
 } from "ai";
-import { z } from "zod";
 
 import type {
   VisionModel,
@@ -18,16 +15,20 @@ import type { VisionVerdict } from "@/domain/image-job";
 import type { ReferenceImage } from "@/domain/reference-image";
 import { REFERENCE_VIEW_LABELS } from "@/domain/reference-view";
 import { generationFailedError } from "@/lib/errors";
+import { parseVisionVerdict } from "./vision-verdict-parse";
+
+/** How many times to ask for a parseable verdict before failing safe. */
+const MAX_REVIEW_ATTEMPTS = 3;
 
 /**
  * The REAL vision-review adapter (`docs/03-ai/image-generation.md` "Vision
  * review", ADR-003/006). Allowed to import the Vercel AI SDK (`ai`) — fenced to
  * `src/adapters/**` by the ESLint boundary (rule 12).
  *
- * It runs a MULTIMODAL structured read: the child's approved reference bytes
- * PLUS the freshly generated scene are sent to a Gemini multimodal model via the
- * language API (`generateText` + `Output.object`), which REPORTS observations
- * against a strict verdict schema. The model never decides publication —
+ * It runs a MULTIMODAL read: the child's approved reference bytes PLUS the
+ * freshly generated scene are sent to a Gemini multimodal model via the language
+ * API (`generateText`), which REPORTS observations as a compact JSON verdict (see
+ * ROBUST STRUCTURED OUTPUT below). The model never decides publication —
  * `decideImageReview` (pure) owns that; a wrong-identity / wrong-count verdict is
  * never approvable (rule 7). Identity is judged by COMPARING each expected child's
  * reference to the scene, which is why the workflow hands the reference bytes in.
@@ -37,26 +38,17 @@ import { generationFailedError } from "@/lib/errors";
  * from the application (the model only reports `observedCount`).
  *
  * The credential is passed EXPLICITLY to `createGateway` (ambient OIDC does not
- * fire in the WDK `"use step"` context). Errors are mapped like the language
- * adapter: availability failures throw retryable; a `NoObjectGeneratedError` or
- * any other failure is a non-retryable generation failure (raw detail server-side
- * only) — the review can never silently pass.
+ * fire in the WDK `"use step"` context).
+ *
+ * ROBUST STRUCTURED OUTPUT: it does NOT use the SDK's strict `Output.object` —
+ * that path returns `NoObjectGeneratedError` too often on the multimodal review
+ * model and silently rejects good illustrations. Instead it asks for compact
+ * JSON in plain text and parses it leniently (`parseVisionVerdict`), retrying up
+ * to {@link MAX_REVIEW_ATTEMPTS} times. Only if EVERY attempt fails to yield a
+ * parseable verdict does it throw (fail safe — a verdict is never fabricated and
+ * the review can never silently pass). Availability failures throw retryable so
+ * the workflow can fall back.
  */
-
-const VerdictWireSchema = z.object({
-  identityByChild: z.array(
-    z.object({
-      characterKey: z.string(),
-      matches: z.boolean(),
-    }),
-  ),
-  observedCount: z.number().int().min(0),
-  outfitConsistent: z.boolean(),
-  propConsistent: z.boolean(),
-  toneAppropriate: z.boolean(),
-  styleConsistent: z.boolean(),
-  notes: z.string().optional(),
-});
 
 function isAvailabilityError(error: unknown): boolean {
   if (APICallError.isInstance(error)) {
@@ -96,6 +88,10 @@ function buildInstruction(request: VisionReviewRequest): string {
     `Intended emotional tone (must be age-appropriate): ${request.tone}.`,
     `Style must match the pinned Art Bible (${request.artBibleVersion}): warm gouache storybook illustration, clear faces, no photorealism, no 3D, no text in the image.`,
     "Set outfitConsistent / propConsistent / toneAppropriate / styleConsistent accordingly.",
+    "",
+    "Reply with ONLY a compact JSON object (no markdown, no prose) of exactly this shape:",
+    `{"identityByChild":[{"characterKey":"<key>","matches":true|false}],"observedCount":<int>,"outfitConsistent":true|false,"propConsistent":true|false,"toneAppropriate":true|false,"styleConsistent":true|false,"notes":"<short>"}`,
+    `Include one identityByChild entry for each expected key (${expectedKeys || "none"}).`,
   );
   return lines.join("\n");
 }
@@ -148,60 +144,63 @@ export function createGatewayVisionModel(): VisionModel {
       route: ImageRouteResolution,
       referenceImages: ReferenceImage[],
     ): Promise<VisionReviewResult> {
-      try {
-        const result = await generateText({
-          model: gateway.languageModel(route.target),
-          messages: buildMessages(request, referenceImages),
-          output: Output.object({
-            name: "vision_verdict",
-            description:
-              "Observations comparing the final children's-book illustration to the attached character reference images.",
-            schema: VerdictWireSchema,
-          }),
-        });
-
-        const wire = VerdictWireSchema.parse(result.output);
-        const reported = new Map(
-          wire.identityByChild.map((c) => [c.characterKey, c.matches]),
-        );
-        const verdict: VisionVerdict = {
-          // One verdict per EXPECTED child; an unreported child is not a match
-          // (rule 7: an unverified identity is never approvable).
-          identityByChild: request.expectedChildren.map((c) => ({
-            characterKey: c.characterKey,
-            matches: reported.get(c.characterKey) ?? false,
-          })),
-          expectedCount: request.expectedCount,
-          observedCount: wire.observedCount,
-          outfitConsistent: wire.outfitConsistent,
-          propConsistent: wire.propConsistent,
-          toneAppropriate: wire.toneAppropriate,
-          styleConsistent: wire.styleConsistent,
-          ...(wire.notes ? { notes: wire.notes } : {}),
-        };
-
-        return {
-          verdict,
-          model: result.response.modelId ?? route.target,
-        };
-      } catch (error) {
-        const availability = isAvailabilityError(error);
-        const noObject = NoObjectGeneratedError.isInstance(error);
-        throw generationFailedError({
-          safeMessage: availability
-            ? "The review service is busy. Please try again."
-            : "This picture could not be reviewed. Please try again.",
-          internalDetail:
-            noObject && error instanceof NoObjectGeneratedError
-              ? `Vision review produced no valid verdict: ${error.text ?? "(no text)"}`
-              : error instanceof Error
-                ? error.message
-                : String(error),
-          retryable: availability,
-          stage: "adapter.gateway-vision-model",
-          cause: error,
-        });
+      const messages = buildMessages(request, referenceImages);
+      let lastText = "";
+      for (let attempt = 0; attempt < MAX_REVIEW_ATTEMPTS; attempt++) {
+        let text: string;
+        try {
+          const result = await generateText({
+            model: gateway.languageModel(route.target),
+            messages,
+          });
+          text = result.text;
+          lastText = text;
+          const wire = parseVisionVerdict(text);
+          if (!wire) continue; // unparseable — ask again
+          const reported = new Map(
+            wire.identityByChild.map((c) => [c.characterKey, c.matches]),
+          );
+          const verdict: VisionVerdict = {
+            // One verdict per EXPECTED child; an unreported child is not a match
+            // (rule 7: an unverified identity is never approvable).
+            identityByChild: request.expectedChildren.map((c) => ({
+              characterKey: c.characterKey,
+              matches: reported.get(c.characterKey) ?? false,
+            })),
+            expectedCount: request.expectedCount,
+            observedCount: wire.observedCount,
+            outfitConsistent: wire.outfitConsistent,
+            propConsistent: wire.propConsistent,
+            toneAppropriate: wire.toneAppropriate,
+            styleConsistent: wire.styleConsistent,
+            ...(wire.notes ? { notes: wire.notes } : {}),
+          };
+          return { verdict, model: result.response.modelId ?? route.target };
+        } catch (error) {
+          // Availability failures throw retryable immediately so the workflow
+          // can fall back; other call errors are retried within this loop.
+          if (isAvailabilityError(error)) {
+            throw generationFailedError({
+              safeMessage: "The review service is busy. Please try again.",
+              internalDetail:
+                error instanceof Error ? error.message : String(error),
+              retryable: true,
+              stage: "adapter.gateway-vision-model",
+              cause: error,
+            });
+          }
+          lastText = error instanceof Error ? error.message : String(error);
+        }
       }
+
+      // Every attempt failed to yield a parseable verdict. Fail safe — never
+      // fabricate a verdict, never silently pass the review.
+      throw generationFailedError({
+        safeMessage: "This picture could not be reviewed. Please try again.",
+        internalDetail: `Vision review produced no parseable verdict after ${MAX_REVIEW_ATTEMPTS} attempts. Last response: ${lastText.slice(0, 300)}`,
+        retryable: false,
+        stage: "adapter.gateway-vision-model",
+      });
     },
   };
 }
