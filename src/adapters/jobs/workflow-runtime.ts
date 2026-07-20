@@ -18,7 +18,6 @@ import type { IllustrationJobStarter } from "@/application/ports/illustration-jo
 import { GENERATE_ILLUSTRATION_TYPE } from "@/application/workflows/generate-illustration-workflow";
 import {
   getChapterImageModel,
-  getImageDerivatives,
   getImageModel,
   getVisionModel,
 } from "@/adapters/images";
@@ -141,7 +140,6 @@ export async function createWorkflowRuntime(): Promise<WorkflowRuntime> {
     objectStorage,
     chapterImageModel: getChapterImageModel(),
     visionModel: getVisionModel(),
-    imageDerivatives: getImageDerivatives(),
     imageRunRepository,
     imageRouteRegistry,
     familyDeletionRepository: createFamilyDeletionRepository(db),

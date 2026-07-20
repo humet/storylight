@@ -1,21 +1,2 @@
-# sharp ships a native binary (libvips) fetched via platform-specific optional
-# packages. It MUST be built (allowlisted here) or the serverless Linux build
-# never provisions the binary and image jobs fail to dlopen libvips.
-onlyBuiltDependencies:
-  - sharp
-
-# The lockfile is generated on macOS, but the deploy target is linux-x64
-# (glibc). Without this, pnpm only records/installs the host's optional
-# binaries, so @img/sharp-libvips-linux-x64 is absent on Vercel and sharp
-# throws ERR_DLOPEN_FAILED. Listing every target arch makes pnpm fetch the
-# linux binaries too, so they exist to be traced into the serverless bundle.
-supportedArchitectures:
-  os:
-    - current
-    - linux
-  cpu:
-    - current
-    - x64
-  libc:
-    - current
-    - glibc
+# (Intentionally minimal.) No native build allowlist or cross-arch fetch is
+# needed: ADR-007 removed `sharp`, so the runtime ships no native image binary.

@@ -12,9 +12,10 @@ export interface ReaderImageProps {
   specId?: string;
   /**
    * The image job state (M9). `pending` paints a calm "Painting this page" slot;
-   * `approved` serves the responsive derivative via the authorized route; `failed`
-   * (manual review / failure) shows a calm fallback. In every case the caption
-   * stays a readable figcaption, so the text is never blocked by image state.
+   * `approved` serves the approved original via the authorized route (ADR-007);
+   * `failed` (manual review / failure) shows a calm fallback. In every case the
+   * caption stays a readable figcaption, so the text is never blocked by image
+   * state.
    */
   status?: "pending" | "approved" | "failed";
   className?: string;

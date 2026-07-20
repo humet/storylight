@@ -2,13 +2,11 @@ import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
 
 const nextConfig: NextConfig = {
-  // Native / WASM packages must stay out of the Server Components bundle and load
-  // via native Node require, or the serverless runtime fails to resolve them
-  // ("Failed to load external module …"). `pg` is auto-externalised by Next;
-  // PGlite (dev/test-only DB fallback) and `sharp` (M9 image derivatives, a
-  // native binary transitively wired into the services composition root) are
-  // added explicitly.
-  serverExternalPackages: ["@electric-sql/pglite", "sharp"],
+  // PGlite (the dev/test-only DB fallback) is a WASM package that must load via
+  // native Node require rather than being bundled into the Server Components
+  // graph. `pg` is auto-externalised by Next. (No `sharp` here — ADR-007: the
+  // runtime does no image encoding, so there is no native image binary.)
+  serverExternalPackages: ["@electric-sql/pglite"],
 };
 
 // Enables the "use workflow" / "use step" directives (ADR-006: Vercel Workflow

@@ -42,6 +42,16 @@ const EnvSchema = z.object({
   // authenticates with it automatically, so a Vercel deploy needs no explicit
   // AI_GATEWAY_API_KEY to reach the gateway (see `getLanguageModel`).
   VERCEL_OIDC_TOKEN: z.string().min(1).optional(),
+
+  // Test-only: force the deterministic FIXTURE model/image adapters even when a
+  // gateway credential is present, so `pnpm test:e2e` (whose `pnpm dev` server
+  // loads `.env.local`, which may carry a real key) stays fast, free, and
+  // deterministic instead of making real, paid model calls. Set only by the
+  // Playwright webServer. Never set in dev/preview/production.
+  STORYLIGHT_FORCE_FIXTURE_MODELS: z
+    .enum(["0", "1"])
+    .optional()
+    .transform((v) => v === "1"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

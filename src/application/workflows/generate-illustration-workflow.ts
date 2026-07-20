@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import type { ChapterImageModel } from "../ports/chapter-image-model";
-import type { ImageDerivatives } from "../ports/image-derivatives";
 import type { ImageGenerationRunRepository } from "../ports/image-generation-run-repository";
 import type { IllustrationRepository } from "../ports/illustration-repository";
 import type { ObjectStorage } from "../ports/object-storage";
@@ -57,9 +56,11 @@ import { DomainError, generationFailedError } from "@/lib/errors";
  *              validate → upload quarantined original → vision review → app-policy
  *              decision. Budget EXACTLY initial → 1 repair → 1 premium escalation →
  *              manual. WRONG IDENTITY / WRONG COUNT is never approvable (rule 7).
- *   finalise → approved: derivatives (sharp) + immutable illustration revision +
- *              publication; manual/failed: publication state only (text stays
- *              readable, original stays quarantined & undeliverable, rule 9).
+ *   finalise → approved: approve the stored ORIGINAL + mint an immutable
+ *              illustration revision + publication; manual/failed: publication
+ *              state only (text stays readable, original stays quarantined &
+ *              undeliverable, rule 9). Per ADR-007 there is NO derivative/encode
+ *              step — the approved original is what the reader is served.
  *
  * Every image + vision call records an `image_generation_runs` cost row. All ids
  * are deterministic so a crash/resume reproduces the same assets/reviews/spend.
@@ -89,9 +90,6 @@ export type GenerateIllustrationInput = z.infer<
   typeof GenerateIllustrationInputSchema
 >;
 
-// Responsive widths that cover common phone/tablet reader viewports without
-// over-encoding (cost-management.md; keeps the single-process dev/e2e harness fast).
-const DERIVATIVE_WIDTHS = [360, 720];
 const REFERENCE_BUDGET = { maxReferences: 8 };
 
 interface PreparePayload {
@@ -118,7 +116,6 @@ export interface GenerateIllustrationDeps {
   seriesRepository: SeriesRepository;
   chapterImageModel: ChapterImageModel;
   visionModel: VisionModel;
-  imageDerivatives: ImageDerivatives;
   objectStorage: ObjectStorage;
   imageRunRepository: ImageGenerationRunRepository;
   imageRouteRegistry: ImageRouteRegistry;
@@ -162,7 +159,6 @@ export function createGenerateIllustrationWorkflow(
     seriesRepository,
     chapterImageModel,
     visionModel,
-    imageDerivatives,
     objectStorage,
     imageRunRepository,
     imageRouteRegistry,
@@ -474,8 +470,10 @@ export function createGenerateIllustrationWorkflow(
         },
       },
 
-      // 3) FINALISE — publish approved (derivatives + revision) or record the
-      //    terminal non-approved state. Never touches the chapter text.
+      // 3) FINALISE — approve the stored ORIGINAL + mint the immutable revision,
+      //    or record the terminal non-approved state. No encode/derivative step
+      //    (ADR-007): the reader is served the approved original. Never touches the
+      //    chapter text.
       {
         key: "finalise",
         label: "Framing this page",
@@ -510,63 +508,9 @@ export function createGenerateIllustrationWorkflow(
             });
           }
 
-          // Read the approved original bytes to derive responsive variants.
-          const originalKey = buildIllustrationAssetKey({
-            familyId: execution.familyId,
-            storyId: job.storyId,
-            chapterId: job.chapterId,
-            chapterRevisionId: job.chapterRevisionId,
-            specId,
-            assetId: paint.winningAssetId,
-          });
-          const original = await objectStorage.read(originalKey);
-          if (!original) {
-            throw generationFailedError({
-              retryable: true,
-              internalDetail: `Approved original ${originalKey} missing from storage.`,
-              stage: "illustration.finalise",
-            });
-          }
-
-          const derived = await imageDerivatives.derive(
-            { bytes: original.bytes, contentType: paint.winningContentType },
-            DERIVATIVE_WIDTHS,
-          );
-          const derivatives = [];
-          for (const d of derived) {
-            const id = await nameBasedUuid(
-              execution.id,
-              "derivative",
-              d.format,
-              String(d.width),
-            );
-            const key = buildIllustrationAssetKey({
-              familyId: execution.familyId,
-              storyId: job.storyId,
-              chapterId: job.chapterId,
-              chapterRevisionId: job.chapterRevisionId,
-              specId,
-              assetId: id,
-            });
-            const checksum = await sha256Hex(d.bytes);
-            await objectStorage.put({
-              key,
-              bytes: d.bytes,
-              contentType: d.contentType,
-              checksum,
-            });
-            derivatives.push({
-              id,
-              storageKey: key,
-              contentType: d.contentType,
-              checksum,
-              byteSize: d.bytes.byteLength,
-              width: d.width,
-              height: d.height,
-              variantWidth: d.width,
-            });
-          }
-
+          // ADR-007: no encode/resize step. The approved original (already
+          // uploaded + recorded quarantined in `paint`) is what gets delivered;
+          // `publishApproved` just flips it to `approved` and mints the revision.
           const revisionNumber = job.latestRevisionNumber + 1;
           await illustrationRepository.publishApproved({
             familyId: execution.familyId,
@@ -589,13 +533,11 @@ export function createGenerateIllustrationWorkflow(
             imageRouteVersion: imageRouteRegistry.resolveReview().version,
             requestSnapshot: paint.request,
             verdictSnapshot: paint.verdict,
-            derivatives,
           });
           return {
             output: {
               state: "approved",
               revisionNumber,
-              derivatives: derivatives.length,
             },
           };
         },

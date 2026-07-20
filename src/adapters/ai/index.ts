@@ -45,6 +45,9 @@ function createUnconfiguredLanguageModel(): LanguageModel {
 
 export function getLanguageModel(): LanguageModel {
   const env = getEnv();
+  // e2e forces the fixture even when a key is present (deterministic, no spend).
+  if (env.STORYLIGHT_FORCE_FIXTURE_MODELS)
+    return createDevFixtureLanguageModel();
   // Explicit key, or a Vercel deploy where the SDK authenticates via OIDC.
   if (env.AI_GATEWAY_API_KEY || env.VERCEL_OIDC_TOKEN)
     return createGatewayLanguageModel();

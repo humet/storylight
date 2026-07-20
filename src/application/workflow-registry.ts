@@ -7,7 +7,6 @@ import type { SeriesRepository } from "./ports/series-repository";
 import type { StoryRepository } from "./ports/story-repository";
 import type { FamilyDeletionRepository } from "./ports/family-deletion-repository";
 import type { ChapterImageModel } from "./ports/chapter-image-model";
-import type { ImageDerivatives } from "./ports/image-derivatives";
 import type { ImageGenerationRunRepository } from "./ports/image-generation-run-repository";
 import type { IllustrationJobStarter } from "./ports/illustration-job-starter";
 import type { IllustrationRepository } from "./ports/illustration-repository";
@@ -67,7 +66,6 @@ export interface WorkflowRegistryDeps {
   objectStorage?: ObjectStorage;
   chapterImageModel?: ChapterImageModel;
   visionModel?: VisionModel;
-  imageDerivatives?: ImageDerivatives;
   imageRunRepository?: ImageGenerationRunRepository;
   imageRouteRegistry?: ImageRouteRegistry;
   /**
@@ -158,7 +156,6 @@ export function createWorkflowRegistry(
     deps.seriesRepository &&
     deps.chapterImageModel &&
     deps.visionModel &&
-    deps.imageDerivatives &&
     deps.objectStorage &&
     deps.imageRunRepository &&
     deps.imageRouteRegistry
@@ -172,7 +169,6 @@ export function createWorkflowRegistry(
           seriesRepository: deps.seriesRepository,
           chapterImageModel: deps.chapterImageModel,
           visionModel: deps.visionModel,
-          imageDerivatives: deps.imageDerivatives,
           objectStorage: deps.objectStorage,
           imageRunRepository: deps.imageRunRepository,
           imageRouteRegistry: deps.imageRouteRegistry,

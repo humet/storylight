@@ -8,27 +8,23 @@ import { getIllustrationService } from "../service";
 
 /**
  * Authorized chapter-illustration delivery (`docs/04-frontend/story-reader.md`
- * "Use responsive derivatives"; "Never show quarantined or rejected images"). The
- * SERVICE enforces ownership + the approved-only state filter, so anything the
- * actor may not see — a pending, manual-review, failed, or another family's
- * illustration — resolves to a uniform 404. The private storage key never leaves
- * the server and no permanent/signed URL is stored. `?w=` selects the responsive
- * derivative width.
+ * "Never show quarantined or rejected images"). The SERVICE enforces ownership +
+ * the approved-only state filter, so anything the actor may not see — a pending,
+ * manual-review, failed, or another family's illustration — resolves to a uniform
+ * 404. The private storage key never leaves the server and no permanent/signed URL
+ * is stored. Per ADR-007 the approved ORIGINAL is served as-is (no runtime encode /
+ * derivative negotiation; responsive delivery is a deferred enhancement).
  */
 export const dynamic = "force-dynamic";
 
 const ParamsSchema = z.object({ specId: z.uuid() });
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ specId: string }> },
 ): Promise<Response> {
   const parsed = ParamsSchema.safeParse(await params);
   if (!parsed.success) return notFound();
-
-  const widthParam = new URL(request.url).searchParams.get("w");
-  const maxWidth =
-    widthParam && /^\d{1,5}$/.test(widthParam) ? Number(widthParam) : undefined;
 
   let actor;
   try {
@@ -43,7 +39,6 @@ export async function GET(
   const image = await service.resolveDeliverableIllustration(
     actor,
     parsed.data.specId,
-    maxWidth,
   );
   if (!image) return notFound();
 

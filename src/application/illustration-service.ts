@@ -7,13 +7,13 @@ import type { ObjectStorage } from "./ports/object-storage";
 
 /**
  * Chapter-illustration DELIVERY service (`docs/04-frontend/story-reader.md`
- * "Illustration behaviour": never show quarantined or rejected images; use
- * responsive derivatives; allow fullscreen). Mirrors the M4 character-asset
- * delivery: it AUTHORISES `story:read` on the actor's family, then resolves the
- * best APPROVED derivative for a spec — the state filter lives in the repository
- * (`getDeliverable` returns null unless the publication AND the asset are
- * `approved`), so rejected/quarantined/retired originals are unreachable from every
- * path (rule 9). The storage key never leaves the server.
+ * "Illustration behaviour": never show quarantined or rejected images; allow
+ * fullscreen). Mirrors the M4 character-asset delivery: it AUTHORISES `story:read`
+ * on the actor's family, then resolves the APPROVED original for a spec (ADR-007:
+ * the original is delivered as-is; no derivatives) — the state filter lives in the
+ * repository (`getDeliverable` returns null unless the publication AND the asset
+ * are `approved`), so rejected/quarantined/retired originals are unreachable from
+ * every path (rule 9). The storage key never leaves the server.
  */
 
 export interface IllustrationServiceDeps {
@@ -43,15 +43,13 @@ export function createIllustrationService(deps: IllustrationServiceDeps) {
 
   return {
     /**
-     * Resolve the deliverable bytes for an APPROVED illustration spec (best
-     * derivative ≤ `maxWidth`, else the original). Returns null for anything the
-     * actor may not see, so the route answers a uniform 404 — rejected/pending
-     * images never leak.
+     * Resolve the deliverable bytes for an APPROVED illustration spec — the stored
+     * original (ADR-007). Returns null for anything the actor may not see, so the
+     * route answers a uniform 404 — rejected/pending images never leak.
      */
     async resolveDeliverableIllustration(
       actor: AuthenticatedActor,
       specId: string,
-      maxWidth?: number,
     ): Promise<DeliveredIllustration | null> {
       const familyId = requirePrimaryFamily(actor);
       await authorizeFamilyAction(familyRepository, {
@@ -62,7 +60,6 @@ export function createIllustrationService(deps: IllustrationServiceDeps) {
       const deliverable = await illustrationRepository.getDeliverable(
         familyId,
         specId,
-        maxWidth,
       );
       if (!deliverable) return null;
       const object = await objectStorage.read(deliverable.storageKey);

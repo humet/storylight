@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFilesystemObjectStorage } from "@/adapters/storage/filesystem-object-storage";
 import { createFakeChapterImageModel } from "@/adapters/images/fake-chapter-image-model";
 import { createFakeVisionModel } from "@/adapters/images/fake-vision-model";
-import { createSharpDerivatives } from "@/adapters/images/sharp-derivatives";
 import { createImageRouteRegistry } from "@/application/model-routes/image-route-registry";
 import { createIllustrationService } from "@/application/illustration-service";
 import type { VisionModel } from "@/application/ports/vision-model";
@@ -216,7 +215,6 @@ function buildImageStack(vision: VisionModel) {
       seriesRepository: createSeriesRepository(db),
       chapterImageModel: createFakeChapterImageModel(),
       visionModel: vision,
-      imageDerivatives: createSharpDerivatives(),
       objectStorage: createFilesystemObjectStorage(storageDir),
       imageRunRepository,
       imageRouteRegistry: createImageRouteRegistry(),
@@ -248,7 +246,7 @@ async function runImageJob(
 }
 
 describe("chapter illustration pipeline (M9 exit)", () => {
-  it("happy path: approves, creates derivatives + an immutable revision, reader serves it", async () => {
+  it("happy path: approves the original + an immutable revision, reader serves the approved original (ADR-007)", async () => {
     const actor = await seedActor("readers");
     const { familyId, storyId, specId } = await seedPublishedStory(actor);
     const objectStorage = createFilesystemObjectStorage(storageDir);
@@ -283,17 +281,18 @@ describe("chapter illustration pipeline (M9 exit)", () => {
     expect(after?.illustrations[0].status).toBe("approved");
     expect(after?.paragraphs).toHaveLength(2); // text still fully readable
 
-    // An immutable revision + an approved original + AVIF/WebP derivatives exist.
+    // An immutable revision + exactly one approved asset: the ORIGINAL. ADR-007:
+    // no derivatives are written — the approved original is what gets delivered.
     const assets = await db
       .select()
       .from(illustrationAssets)
       .where(eq(illustrationAssets.specId, specId));
     const approved = assets.filter((a) => a.state === "approved");
-    expect(approved.some((a) => a.kind === "original")).toBe(true);
-    expect(approved.some((a) => a.contentType === "image/avif")).toBe(true);
-    expect(approved.some((a) => a.contentType === "image/webp")).toBe(true);
+    expect(approved.every((a) => a.kind === "original")).toBe(true);
+    expect(approved.filter((a) => a.kind === "original")).toHaveLength(1);
+    expect(assets.some((a) => a.kind === "derivative")).toBe(false);
 
-    // Delivery returns real bytes for the approved spec.
+    // Delivery returns the approved original PNG for the approved spec.
     const service = createIllustrationService({
       familyRepository: createFamilyRepository(db),
       illustrationRepository: run.illustrationRepository,
@@ -304,7 +303,12 @@ describe("chapter illustration pipeline (M9 exit)", () => {
       specId,
     );
     expect(delivered).not.toBeNull();
+    expect(delivered!.contentType).toBe("image/png");
     expect(delivered!.bytes.byteLength).toBeGreaterThan(0);
+    // The delivered bytes are a real PNG (magic bytes).
+    expect(Array.from(delivered!.bytes.subarray(0, 4))).toEqual([
+      0x89, 0x50, 0x4e, 0x47,
+    ]);
 
     // Cost/usage recorded: a generation run + a review run.
     const runs = await run.imageRunRepository.listRunsForWorkflow(

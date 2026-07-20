@@ -60,18 +60,6 @@ export interface RecordReviewInput {
   decision: string;
 }
 
-/** An approved derivative to persist alongside its original. */
-export interface DerivativeRecord {
-  id: string;
-  storageKey: string;
-  contentType: string;
-  checksum: string;
-  byteSize: number;
-  width: number;
-  height: number;
-  variantWidth: number;
-}
-
 export interface PublishApprovedInput {
   familyId: string;
   storyId: string;
@@ -88,7 +76,6 @@ export interface PublishApprovedInput {
   imageRouteVersion: string;
   requestSnapshot: ImageSceneRequest;
   verdictSnapshot: VisionVerdict;
-  derivatives: DerivativeRecord[];
   now?: Date;
 }
 
@@ -121,10 +108,10 @@ export interface IllustrationRepository {
   recordReview(input: RecordReviewInput): Promise<void>;
 
   /**
-   * Publish an approved illustration ATOMICALLY: approve the original, insert its
-   * responsive derivatives, mint the next immutable illustration revision, RETIRE
-   * the prior approved revision's assets, and upsert the publication to `approved`.
-   * Idempotent via deterministic ids.
+   * Publish an approved illustration ATOMICALLY: approve the stored original, mint
+   * the next immutable illustration revision, RETIRE the prior approved revision's
+   * assets, and upsert the publication to `approved`. No derivatives are written
+   * (ADR-007). Idempotent via deterministic ids.
    */
   publishApproved(input: PublishApprovedInput): Promise<void>;
 
@@ -143,14 +130,14 @@ export interface IllustrationRepository {
   ): Promise<IllustrationState | null>;
 
   /**
-   * The deliverable APPROVED asset for a spec (best derivative ≤ requested width,
-   * else the original), ONLY when the publication is `approved` and the asset is
-   * `approved`. Returns null otherwise — rejected/quarantined/retired assets and
-   * non-approved publications are unreachable (rule 9).
+   * The deliverable APPROVED original for a spec, ONLY when the publication is
+   * `approved` and the asset is `approved`. Returns null otherwise — rejected/
+   * quarantined/retired assets and non-approved publications are unreachable
+   * (rule 9). Per ADR-007 the approved original is delivered as-is (no derivative
+   * negotiation).
    */
   getDeliverable(
     familyId: string,
     specId: string,
-    maxWidth?: number,
   ): Promise<DeliverableIllustration | null>;
 }

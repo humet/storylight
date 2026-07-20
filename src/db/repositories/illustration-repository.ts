@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import type {
   DeliverableIllustration,
@@ -154,8 +154,8 @@ export function createIllustrationRepository(
       const now = input.now ?? new Date();
       await db.transaction(async (tx) => {
         // Retire every currently-approved asset of this spec (a prior revision's
-        // original + derivatives) except the new original, so a superseded
-        // illustration is never deliverable (rule 5/9).
+        // original) except the new original, so a superseded illustration is never
+        // deliverable (rule 5/9).
         const approvedAssets = await tx
           .select({ id: illustrationAssets.id })
           .from(illustrationAssets)
@@ -173,38 +173,12 @@ export function createIllustrationRepository(
             .where(eq(illustrationAssets.id, asset.id));
         }
 
-        // Approve the new original.
+        // Approve the new original. ADR-007: no derivatives are written — the
+        // approved original is the delivered asset.
         await tx
           .update(illustrationAssets)
           .set({ state: "approved", reviewedAt: now })
           .where(eq(illustrationAssets.id, input.originalAssetId));
-
-        // Insert the responsive derivatives (approved).
-        for (const d of input.derivatives) {
-          await tx
-            .insert(illustrationAssets)
-            .values({
-              id: d.id,
-              familyId: input.familyId,
-              storyId: input.storyId,
-              chapterId: input.chapterId,
-              chapterRevisionId: input.chapterRevisionId,
-              specId: input.specId,
-              kind: "derivative",
-              originalAssetId: input.originalAssetId,
-              variantWidth: d.variantWidth,
-              state: "approved",
-              storageKey: d.storageKey,
-              contentType: d.contentType,
-              checksum: d.checksum,
-              byteSize: d.byteSize,
-              width: d.width,
-              height: d.height,
-              model: input.model,
-              reviewedAt: now,
-            })
-            .onConflictDoNothing({ target: illustrationAssets.id });
-        }
 
         // Mint the immutable illustration revision.
         await tx
@@ -279,7 +253,6 @@ export function createIllustrationRepository(
     async getDeliverable(
       familyId,
       specId,
-      maxWidth,
     ): Promise<DeliverableIllustration | null> {
       // Gate on an APPROVED publication first — nothing else is deliverable.
       const [pub] = await db
@@ -305,35 +278,7 @@ export function createIllustrationRepository(
         .limit(1);
       if (!revision) return null;
 
-      // Prefer the largest AVIF derivative ≤ requested width; else the widest
-      // approved derivative; else the approved original.
-      const derivatives = await db
-        .select({
-          storageKey: illustrationAssets.storageKey,
-          contentType: illustrationAssets.contentType,
-          variantWidth: illustrationAssets.variantWidth,
-        })
-        .from(illustrationAssets)
-        .where(
-          and(
-            eq(illustrationAssets.originalAssetId, revision.originalAssetId),
-            eq(illustrationAssets.state, "approved"),
-            eq(illustrationAssets.contentType, "image/avif"),
-            maxWidth
-              ? lte(illustrationAssets.variantWidth, maxWidth)
-              : undefined,
-          ),
-        )
-        .orderBy(desc(illustrationAssets.variantWidth));
-
-      if (derivatives[0]) {
-        return {
-          storageKey: derivatives[0].storageKey,
-          contentType: derivatives[0].contentType,
-        };
-      }
-
-      // Fall back to the approved original.
+      // ADR-007: deliver the approved ORIGINAL directly (no derivatives exist).
       const [original] = await db
         .select({
           storageKey: illustrationAssets.storageKey,

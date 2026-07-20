@@ -11,6 +11,11 @@ export default defineConfig({
   // BUILD_STATE.md 2026-07-18 e2e-serialisation note). Wall-clock cost is
   // a few minutes; correctness beats parallelism here.
   workers: 1,
+  // Generation workflows run on the in-process dispatcher against the dev
+  // PGlite; a full story (plan → draft → review → publish, then image jobs) is
+  // comfortably slower than Playwright's 30s default, so give each test room.
+  timeout: 120_000,
+  expect: { timeout: 10_000 },
   use: {
     baseURL: "http://localhost:3000",
   },
@@ -28,5 +33,9 @@ export default defineConfig({
     command: "pnpm dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
+    // Force the deterministic fixture models even if .env.local carries a real
+    // AI_GATEWAY_API_KEY — e2e must be fast, free, and deterministic, never
+    // making paid model calls. (Next does not override an already-set env var.)
+    env: { STORYLIGHT_FORCE_FIXTURE_MODELS: "1" },
   },
 });
