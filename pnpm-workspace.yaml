@@ -1,3 +1,8 @@
-ignoredBuiltDependencies:
+# sharp ships a native binary fetched by its install script. It MUST be built
+# (allowlisted here) or the serverless Linux build never provisions the
+# platform binary and the runtime fails with "Failed to load external module
+# sharp". pnpm v10 blocks build scripts by default; this allowlist opts sharp
+# back in. unrs-resolver (a dev-only native resolver) is intentionally left
+# unbuilt — it is not needed at runtime.
+onlyBuiltDependencies:
   - sharp
-  - unrs-resolver
