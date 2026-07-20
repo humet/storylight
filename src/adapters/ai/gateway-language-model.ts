@@ -1,5 +1,6 @@
 import {
   APICallError,
+  createGateway,
   generateText,
   NoObjectGeneratedError,
   Output,
@@ -22,10 +23,13 @@ import { generationFailedError } from "@/lib/errors";
  * ESLint boundary fences `ai` to `src/adapters/**`, so provider SDKs never leak
  * into domain or frontend code (domain rule 12).
  *
- * Models are addressed as GATEWAY SLUGS through the AI Gateway (a single
- * `AI_GATEWAY_API_KEY`, read from the environment by the SDK's default gateway
- * provider). It uses the mandated `generateText` + `Output.object` API — never a
- * deprecated object-generation API. `Output.object` gives the provider structural
+ * Models are addressed as GATEWAY SLUGS through the AI Gateway. The credential
+ * is passed EXPLICITLY to `createGateway` (`AI_GATEWAY_API_KEY`, or the Vercel
+ * `VERCEL_OIDC_TOKEN` that Vercel auto-injects and rotates) rather than left to
+ * the SDK's ambient auto-detection — the latter does not fire inside the WDK
+ * `"use step"` execution context, so a story would fail immediately with a
+ * non-retryable provider rejection. It uses the mandated `generateText` +
+ * `Output.object` API — never a deprecated object-generation API. `Output.object` gives the provider structural
  * guidance, but this adapter returns the RAW `text` so the application pipeline
  * owns parse → validate → the repair ladder; on a `NoObjectGeneratedError` it
  * still returns the raw text (so the pipeline can classify + repair) rather than
@@ -76,6 +80,13 @@ function isAvailabilityError(error: unknown): boolean {
 }
 
 export function createGatewayLanguageModel(): LanguageModel {
+  // Explicit credential (see module note). Read at call time so a rotated
+  // OIDC token is always current; falls back to ambient auto-detection only if
+  // neither is present.
+  const apiKey =
+    process.env.AI_GATEWAY_API_KEY ?? process.env.VERCEL_OIDC_TOKEN;
+  const gateway = createGateway(apiKey ? { apiKey } : {});
+
   return {
     async generate(
       request: LanguageModelRequest,
@@ -83,7 +94,7 @@ export function createGatewayLanguageModel(): LanguageModel {
       const start = Date.now();
       try {
         const result = await generateText({
-          model: request.target,
+          model: gateway(request.target),
           system: request.system,
           prompt: request.prompt,
           temperature: request.settings.temperature,
