@@ -89,6 +89,8 @@ Provider choices must remain replaceable. Domain code must not import provider S
 - [`decisions/ADR-004-capability-based-model-routing.md`](decisions/ADR-004-capability-based-model-routing.md)
 - [`decisions/ADR-005-postgres-and-drizzle.md`](decisions/ADR-005-postgres-and-drizzle.md)
 - [`decisions/ADR-006-concrete-infrastructure.md`](decisions/ADR-006-concrete-infrastructure.md)
+- [`decisions/ADR-007-no-runtime-image-encoding.md`](decisions/ADR-007-no-runtime-image-encoding.md)
+- [`decisions/ADR-008-visual-continuity-beyond-child-identity.md`](decisions/ADR-008-visual-continuity-beyond-child-identity.md)
 
 ## Claude Code entry point
 
