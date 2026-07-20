@@ -12,12 +12,14 @@ import { createGatewayLanguageModel } from "./gateway-language-model";
 /**
  * Composition-root selection for the {@link LanguageModel} port (mirrors
  * `getDb()` / `getObjectStorage()` / `getImageModel()`):
- *  - `AI_GATEWAY_API_KEY` set → the real gateway adapter;
+ *  - `AI_GATEWAY_API_KEY` set, OR a Vercel deploy (`VERCEL_OIDC_TOKEN` present,
+ *    which the SDK's gateway provider uses to authenticate automatically) →
+ *    the real gateway adapter;
  *  - else dev/test-like → a context-aware DEV FIXTURE model so the running dev app
  *    (and the Playwright e2e) publishes a believable one-off story offline
  *    (mirrors the M4 dev fake image model);
- *  - otherwise (production without a key) → an UNCONFIGURED model that composes
- *    fine but throws a clear, non-retryable error if actually invoked.
+ *  - otherwise (production with neither credential) → an UNCONFIGURED model that
+ *    composes fine but throws a clear, non-retryable error if actually invoked.
  *
  * The composing (non-throwing at construction) fallback matters: the workflow
  * runtime builds the language model eagerly while wiring the registry, and must
@@ -43,7 +45,9 @@ function createUnconfiguredLanguageModel(): LanguageModel {
 
 export function getLanguageModel(): LanguageModel {
   const env = getEnv();
-  if (env.AI_GATEWAY_API_KEY) return createGatewayLanguageModel();
+  // Explicit key, or a Vercel deploy where the SDK authenticates via OIDC.
+  if (env.AI_GATEWAY_API_KEY || env.VERCEL_OIDC_TOKEN)
+    return createGatewayLanguageModel();
   // Dev/test-like without a key → the context-aware fixture model so the running
   // app publishes a believable story offline (tests inject their own fake).
   if (isDevLikeEnv(env)) return createDevFixtureLanguageModel();

@@ -37,6 +37,11 @@ const EnvSchema = z.object({
 
   // Vercel AI Gateway (single key for all model providers) — wired in M6.
   AI_GATEWAY_API_KEY: z.string().min(1).optional(),
+
+  // Auto-injected on Vercel deployments. The AI SDK's gateway provider
+  // authenticates with it automatically, so a Vercel deploy needs no explicit
+  // AI_GATEWAY_API_KEY to reach the gateway (see `getLanguageModel`).
+  VERCEL_OIDC_TOKEN: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
