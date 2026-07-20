@@ -2,6 +2,15 @@
 
 Read this before starting a milestone; update it when you finish one. Milestones and their Read/Build/Exit lists live in `docs/IMPLEMENTATION_PLAN.md`. Concrete infrastructure choices live in `docs/decisions/ADR-006-concrete-infrastructure.md`. Project invariants live in `CLAUDE.md` (via `AGENTS.md`).
 
+## Deployment (2026-07-20)
+
+Live on Vercel (personal account `rob-hs-projects`), production `https://storylight-two.vercel.app`, auto-deploying from `github.com/humet/storylight` `main`. Provisioned: **Neon Postgres** (marketplace integration → `DATABASE_URL`/`DATABASE_URL_UNPOOLED`; migrations run manually with `DATABASE_URL=$DATABASE_URL_UNPOOLED pnpm db:migrate`, applied once), **Vercel Blob** private store `storylight-assets` (→ `BLOB_READ_WRITE_TOKEN`), `BETTER_AUTH_SECRET` (all envs), `BETTER_AUTH_URL` (production). Verified live: sign-up → session + family bootstrap, character create/persist. Two prod deploy fixes were needed and are committed (see log below): sharp as a `serverExternalPackages` + `onlyBuiltDependencies` + lazy-loaded, and pnpm `supportedArchitectures` for the linux binary.
+
+**Not yet done (needs a decision / follow-up):**
+- **AI models are OFF in production** — no `AI_GATEWAY_API_KEY`, so story/chapter/illustration generation throws (`getLanguageModel` → unconfigured). Everything else works. Turning it on = Vercel AI Gateway key; caveat per `docs/production-readiness.md`: routes carry only `local-fake` evaluation approvals, so run `pnpm eval` against real providers before trusting output. Rob's call (real model spend).
+- **Preview env** unset (`BETTER_AUTH_SECRET`/`URL` only on production+dev; preview needs a per-branch value and its own DB — CLI needs the git-branch arg in non-interactive mode).
+- Neon is a single database shared across environments; consider a preview branch before enabling preview deploys.
+
 ## Milestone checklist
 
 - [x] M0 — Decisions + scaffold seams (ADR-006, this file, Next.js scaffold, boundary lint, CI)
