@@ -1,10 +1,9 @@
-import sharp from "sharp";
-
 import type {
   DerivativeSource,
   DerivedImage,
   ImageDerivatives,
 } from "@/application/ports/image-derivatives";
+import { loadSharp } from "./load-sharp";
 
 /**
  * sharp-backed {@link ImageDerivatives} adapter (M9). Produces responsive AVIF +
@@ -20,6 +19,7 @@ export function createSharpDerivatives(): ImageDerivatives {
       source: DerivativeSource,
       widths: number[],
     ): Promise<DerivedImage[]> {
+      const sharp = await loadSharp();
       const meta = await sharp(source.bytes).metadata();
       const sourceWidth = meta.width ?? Math.max(...widths);
       const results: DerivedImage[] = [];

@@ -1,8 +1,21 @@
-# sharp ships a native binary fetched by its install script. It MUST be built
-# (allowlisted here) or the serverless Linux build never provisions the
-# platform binary and the runtime fails with "Failed to load external module
-# sharp". pnpm v10 blocks build scripts by default; this allowlist opts sharp
-# back in. unrs-resolver (a dev-only native resolver) is intentionally left
-# unbuilt — it is not needed at runtime.
+# sharp ships a native binary (libvips) fetched via platform-specific optional
+# packages. It MUST be built (allowlisted here) or the serverless Linux build
+# never provisions the binary and image jobs fail to dlopen libvips.
 onlyBuiltDependencies:
   - sharp
+
+# The lockfile is generated on macOS, but the deploy target is linux-x64
+# (glibc). Without this, pnpm only records/installs the host's optional
+# binaries, so @img/sharp-libvips-linux-x64 is absent on Vercel and sharp
+# throws ERR_DLOPEN_FAILED. Listing every target arch makes pnpm fetch the
+# linux binaries too, so they exist to be traced into the serverless bundle.
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+    - x64
+  libc:
+    - current
+    - glibc

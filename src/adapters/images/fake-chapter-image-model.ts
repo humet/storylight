@@ -1,10 +1,9 @@
-import sharp from "sharp";
-
 import type {
   ChapterImageModel,
   GeneratedSceneImage,
 } from "@/application/ports/chapter-image-model";
 import type { ImageSceneRequest } from "@/domain/image-request";
+import { loadSharp } from "./load-sharp";
 
 /**
  * Deterministic FAKE chapter image model (M9). Renders a calm placeholder SCENE as
@@ -46,6 +45,7 @@ function colourFrom(
 export function createFakeChapterImageModel(): ChapterImageModel {
   return {
     async generate(request: ImageSceneRequest): Promise<GeneratedSceneImage> {
+      const sharp = await loadSharp();
       // The FAKE renders at a capped long edge (the real adapter targets 2K). This
       // keeps the placeholder's aspect ratio exactly (technical validation checks
       // the RATIO, not the absolute size) while keeping local sharp encoding fast
