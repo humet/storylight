@@ -85,7 +85,7 @@ describe("fake chapter image model (ADR-007: no codec)", () => {
     artBibleVersion: "mvp-1",
   } as unknown as ImageSceneRequest;
 
-  // The fake ignores the route; a minimal stub satisfies the two-arg port.
+  // The fake ignores the route + references; minimal stubs satisfy the port.
   const route = {
     capability: "routine-chapter-illustration",
     version: "mvp-image-routes-v1",
@@ -95,7 +95,7 @@ describe("fake chapter image model (ADR-007: no codec)", () => {
 
   it("returns a decodable PNG that passes technical validation", async () => {
     const model = createFakeChapterImageModel();
-    const generated = await model.generate(request, route);
+    const generated = await model.generate(request, route, []);
 
     expect(generated.contentType).toBe("image/png");
     expect(Array.from(generated.bytes.subarray(0, 8))).toEqual(PNG_MAGIC);
@@ -122,8 +122,8 @@ describe("fake chapter image model (ADR-007: no codec)", () => {
 
   it("is deterministic per seed and diverges on a repair attempt", async () => {
     const model = createFakeChapterImageModel();
-    const a = await model.generate(request, route);
-    const b = await model.generate(request, route);
+    const a = await model.generate(request, route, []);
+    const b = await model.generate(request, route, []);
     expect(Array.from(a.bytes)).toEqual(Array.from(b.bytes));
 
     const repaired = await model.generate(
@@ -132,6 +132,7 @@ describe("fake chapter image model (ADR-007: no codec)", () => {
         repairInstruction: "make the child clearly the same person",
       } as unknown as ImageSceneRequest,
       route,
+      [],
     );
     expect(Array.from(repaired.bytes)).not.toEqual(Array.from(a.bytes));
   });

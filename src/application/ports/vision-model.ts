@@ -1,5 +1,6 @@
 import type { VisionVerdict } from "@/domain/image-job";
 import type { ImageRouteResolution } from "@/domain/image-route";
+import type { ReferenceImage } from "@/domain/reference-image";
 
 /**
  * VISION MODEL port (`docs/03-ai/image-generation.md` "Vision review"). A
@@ -9,6 +10,12 @@ import type { ImageRouteResolution } from "@/domain/image-route";
  * never writes canonical state and never approves anything — it only reports;
  * `decideImageReview` (pure) owns the decision. Adapters live in
  * `src/adapters/images/**` (rule 12).
+ *
+ * IDENTITY CHECK (rule 7): the review compares the scene against the child's
+ * APPROVED reference bytes. The application layer resolves those bytes and passes
+ * them as the separate {@link ReferenceImage}[] argument; the real adapter puts
+ * each expected child's reference alongside the scene so the model can report
+ * whether identity matches. The deterministic fake ignores the argument.
  */
 
 export interface VisionReviewRequest {
@@ -37,5 +44,6 @@ export interface VisionModel {
   review(
     request: VisionReviewRequest,
     route: ImageRouteResolution,
+    referenceImages: ReferenceImage[],
   ): Promise<VisionReviewResult>;
 }

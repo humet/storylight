@@ -34,6 +34,7 @@ import {
   type SceneChild,
   type SelectedReference,
 } from "@/domain/reference-selection";
+import type { ReferenceImage } from "@/domain/reference-image";
 import { buildIllustrationAssetKey } from "@/domain/storage-keys";
 import type { ImageCapability } from "@/domain/model-capability";
 import {
@@ -266,6 +267,45 @@ export function createGenerateIllustrationWorkflow(
             prominent: s.prominent,
           }));
 
+          // Resolve the selected references to their APPROVED bytes once, up
+          // front, and reuse them for every ladder phase + the vision review.
+          // The model-neutral request carries only `assetId`s (it stays pure +
+          // snapshot-tested); the workflow — which alone holds objectStorage +
+          // the visual-asset repository — turns each selected child reference
+          // into its private storage key → bytes so the adapter can condition
+          // identity on them (ADR-003, rule 7). Bytes never enter the payload.
+          const characterIdByKey = new Map<string, string>();
+          for (const characterId of job.subjectCharacterIds) {
+            const character = await characterRepository.getCharacter(
+              execution.familyId,
+              characterId,
+            );
+            if (character) characterIdByKey.set(character.key, characterId);
+          }
+          const referenceImages: ReferenceImage[] = [];
+          for (const ref of prep.references) {
+            // Only child-derived references (identity/second-angle/outfit) carry
+            // a characterKey + view + resolvable approved bytes; extras (scenery)
+            // are not identity anchors and are skipped here.
+            if (!ref.characterKey || !ref.view) continue;
+            const characterId = characterIdByKey.get(ref.characterKey);
+            if (!characterId) continue;
+            const asset = await visualAssetRepository.getAsset(
+              execution.familyId,
+              characterId,
+              ref.assetId,
+            );
+            if (!asset) continue;
+            const object = await objectStorage.read(asset.storageKey);
+            if (!object) continue;
+            referenceImages.push({
+              characterKey: ref.characterKey,
+              view: ref.view,
+              bytes: object.bytes,
+              contentType: asset.contentType,
+            });
+          }
+
           let repairReasons: string[] = [];
           let result: PaintPayload = {
             decision: "failed",
@@ -306,7 +346,11 @@ export function createGenerateIllustrationWorkflow(
             const startedAt = Date.now();
             let generated;
             try {
-              generated = await chapterImageModel.generate(request, genRoute);
+              generated = await chapterImageModel.generate(
+                request,
+                genRoute,
+                referenceImages,
+              );
               assertTechnicalImage(
                 {
                   bytes: generated.bytes,
@@ -417,6 +461,7 @@ export function createGenerateIllustrationWorkflow(
                 artBibleVersion: MVP_ART_BIBLE.version,
               },
               reviewRoute,
+              referenceImages,
             );
             const decision = decideImageReview({ verdict, phase });
             await illustrationRepository.recordReview({

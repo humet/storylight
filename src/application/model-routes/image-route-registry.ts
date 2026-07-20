@@ -21,6 +21,21 @@ interface ImageRouteSeed {
   costMinorUnitsPerImage: number;
 }
 
+/**
+ * The VISION REVIEW route. Unlike generation, a review is a MULTIMODAL TEXT read
+ * (compare references to the scene → structured verdict), so it must target a
+ * language/vision model — NOT an image-generation slug. `google/gemini-2.5-flash`
+ * is the confirmed-working multimodal reviewer (`docs/03-ai/models.md`: a
+ * different family reviews). Kept as its own seed (there is no image-review entry
+ * in the closed `ImageCapability` vocabulary, which is fixed by a Postgres enum);
+ * the meaningful lineage fields recorded per run are the resolved target + route
+ * version, both of which this carries correctly.
+ */
+const REVIEW_ROUTE: ImageRouteSeed = {
+  target: "google/gemini-2.5-flash",
+  costMinorUnitsPerImage: 50,
+};
+
 const ROUTES: Record<ImageCapability, ImageRouteSeed> = {
   // Character/style reference generation is M4's flow; listed for completeness.
   "character-reference-generation": {
@@ -33,7 +48,7 @@ const ROUTES: Record<ImageCapability, ImageRouteSeed> = {
   },
   // Routine 2K chapter illustration (cost-management.md: prefer routine over premium).
   "routine-chapter-illustration": {
-    target: "google/gemini-3-flash-image",
+    target: "google/gemini-3.1-flash-image",
     costMinorUnitsPerImage: 350,
   },
   // Premium escalation tier.
@@ -43,7 +58,7 @@ const ROUTES: Record<ImageCapability, ImageRouteSeed> = {
   },
   // Targeted repair (kept on the routine tier).
   "illustration-repair": {
-    target: "google/gemini-3-flash-image",
+    target: "google/gemini-3.1-flash-image",
     costMinorUnitsPerImage: 350,
   },
 };
@@ -81,9 +96,19 @@ export function createImageRouteRegistry(): ImageRouteRegistry {
       if (phase === "repair") return resolve("illustration-repair");
       return resolve("routine-chapter-illustration");
     },
-    // The vision review is a multimodal read; price it on the routine tier.
+    // The vision review is a multimodal TEXT read against a vision model — never
+    // an image-generation slug. It reports; the pure policy decides.
     resolveReview() {
-      return resolve("routine-chapter-illustration");
+      return {
+        // No image-review entry exists in the closed ImageCapability vocabulary;
+        // label it routine for the resolution shape — the recorded lineage is the
+        // target + version below, and the workflow records the review run's own
+        // capability separately.
+        capability: "routine-chapter-illustration",
+        version: IMAGE_ROUTE_VERSION,
+        target: REVIEW_ROUTE.target,
+        costMinorUnitsPerImage: REVIEW_ROUTE.costMinorUnitsPerImage,
+      };
     },
   };
 }
