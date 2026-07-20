@@ -1,4 +1,5 @@
 import { sleep } from "workflow";
+import { start } from "workflow/api";
 
 import { createWorkflowRuntime } from "./workflow-runtime";
 
@@ -42,8 +43,20 @@ async function runOneStage(
   // the lease can write; a reclaimed stale drive's writes no-op. The uuid is
   // generated inside this durable step, so a replay reuses the persisted token.
   const leaseOwner = `wdk:${workflowId}:${globalThis.crypto.randomUUID()}`;
-  const { engine } = await createWorkflowRuntime();
-  const outcome = await engine.runNextStage(workflowId, leaseOwner);
+  const runtime = await createWorkflowRuntime();
+  // Wire the runtime's late-bound dispatcher so a stage that starts a CHILD
+  // workflow (the dispatch-illustrations stage → one `generate-illustration`
+  // job per spec) actually launches it durably. Without this, `dispatcherRef`
+  // is null in the step context (only `compose()` sets it, and the step builds
+  // the runtime directly), so child image jobs are created but never driven —
+  // every illustration sits `queued` and no page is ever painted. `start()` is
+  // called from a `"use step"`, which is the supported way to launch a child.
+  runtime.dispatcherRef.current = {
+    async dispatch(childWorkflowId: string): Promise<void> {
+      await start(driveWorkflowRun, [childWorkflowId]);
+    },
+  };
+  const outcome = await runtime.engine.runNextStage(workflowId, leaseOwner);
   switch (outcome.kind) {
     case "retry":
       return { done: false, sleepMs: outcome.backoffMs };
