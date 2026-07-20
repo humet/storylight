@@ -53,3 +53,6 @@ next-env.d.ts
 storybook-static
 .env*.local
 /.swc
+
+# scratch probe scripts
+_*.mjs
