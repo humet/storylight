@@ -27,6 +27,10 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
+    "@jsquash/avif": "^2.1.1",
+    "@jsquash/png": "^3.1.1",
+    "@jsquash/resize": "^2.1.1",
+    "@jsquash/webp": "^1.5.0",
     "@vercel/blob": "^2.6.1",
     "ai": "^7.0.31",
     "better-auth": "^1.6.23",

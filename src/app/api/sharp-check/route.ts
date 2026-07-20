@@ -1,24 +1,36 @@
 import { NextResponse } from "next/server";
 
-// TEMP diagnostic (to be removed): exercise sharp in a normal serverless
-// function to confirm whether the native libvips binary loads on Vercel.
+// TEMP diagnostic (to be removed): exercise a WASM image codec (@jsquash) in a
+// Vercel serverless function to confirm it works under Turbopack before
+// migrating the image adapters off sharp.
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const { loadSharp } = await import("@/adapters/images/load-sharp");
-    const sharp = await loadSharp();
-    const png = await sharp({
-      create: {
-        width: 8,
-        height: 8,
-        channels: 4,
-        background: { r: 10, g: 20, b: 30, alpha: 1 },
-      },
-    })
-      .png()
-      .toBuffer();
-    return NextResponse.json({ ok: true, bytes: png.length });
+    const { encode: encodeWebp } = await import("@jsquash/webp");
+    const { encode: encodeAvif } = await import("@jsquash/avif");
+    const resize = (await import("@jsquash/resize")).default;
+
+    const w = 16;
+    const h = 16;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 120;
+      data[i + 1] = 90;
+      data[i + 2] = 60;
+      data[i + 3] = 255;
+    }
+    const src = { data, width: w, height: h } as ImageData;
+
+    const resized = await resize(src, { width: 8, height: 8 });
+    const webp = await encodeWebp(resized, { quality: 72 });
+    const avif = await encodeAvif(resized, { quality: 55 });
+
+    return NextResponse.json({
+      ok: true,
+      webpBytes: webp.byteLength,
+      avifBytes: avif.byteLength,
+    });
   } catch (e) {
     return NextResponse.json({
       ok: false,
