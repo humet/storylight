@@ -110,6 +110,21 @@ const failingIdentity = (): VisionVerdict => ({
   styleConsistent: true,
 });
 
+/**
+ * A NON-blocking failure (correct identity + count, but outfit continuity broken):
+ * `decideImageReview` advances the ladder (initial → repair) without ever being a
+ * blocking rule-7 failure, so a subsequent approving verdict can approve.
+ */
+const failingOutfit = (): VisionVerdict => ({
+  identityByChild: [{ characterKey: "rosa", matches: true }],
+  expectedCount: 1,
+  observedCount: 1,
+  outfitConsistent: false,
+  propConsistent: true,
+  toneAppropriate: true,
+  styleConsistent: true,
+});
+
 let harness: TestDatabase;
 let db: Database;
 let storageDir: string;
@@ -310,12 +325,46 @@ describe("chapter illustration pipeline (M9 exit)", () => {
       0x89, 0x50, 0x4e, 0x47,
     ]);
 
-    // Cost/usage recorded: a generation run + a review run.
+    // Cost/usage recorded: a generation run + a review run. The initial phase
+    // approved, so the repair + escalation stages short-circuited to no-ops —
+    // EXACTLY ONE image generation happened (one image call per engine stage).
     const runs = await run.imageRunRepository.listRunsForWorkflow(
       run.executionId,
     );
-    expect(runs.some((r) => r.kind === "generation")).toBe(true);
-    expect(runs.some((r) => r.kind === "review")).toBe(true);
+    expect(runs.filter((r) => r.kind === "generation")).toHaveLength(1);
+    expect(runs.filter((r) => r.kind === "review")).toHaveLength(1);
+  });
+
+  it("repair path: initial non-blocking failure → repair approves → escalation short-circuits (2 image calls)", async () => {
+    const actor = await seedActor("repair");
+    const { familyId, storyId, specId } = await seedPublishedStory(actor);
+    const storyRepo = createStoryRepository(db);
+
+    // Initial review reports a non-blocking outfit break → targeted repair; the
+    // repair phase's review then approves (the fake's default approving verdict).
+    const vision = createFakeVisionModel({ verdicts: [failingOutfit()] });
+    const run = await runImageJob(actor, specId, vision, "job-repair");
+    expect(run.result.finalStatus).toBe("completed");
+
+    // The repaired image is approved and the reader serves it.
+    expect(
+      await run.illustrationRepository.getPublicationState(familyId, specId),
+    ).toBe("approved");
+    const reader = await storyRepo.getStoryReader(
+      familyId,
+      actor.userId,
+      storyId,
+    );
+    expect(reader?.illustrations[0].status).toBe("approved");
+    expect(reader?.paragraphs).toHaveLength(2);
+
+    // EXACTLY two generations (initial + repair); the escalation phase was a
+    // no-op because the repair phase approved — one image call per engine stage.
+    const runs = await run.imageRunRepository.listRunsForWorkflow(
+      run.executionId,
+    );
+    expect(runs.filter((r) => r.kind === "generation")).toHaveLength(2);
+    expect(runs.filter((r) => r.kind === "review")).toHaveLength(2);
   });
 
   it("identity failure → repair → escalation → manual-pending; text still readable; delivery 404", async () => {

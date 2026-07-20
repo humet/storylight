@@ -1,9 +1,16 @@
 import type { AuthenticatedActor } from "@/domain/actor";
 import type { FamilyCapability } from "@/domain/authorization";
-import { buildCharacterVisualDescriptor } from "@/domain/character-visual-descriptor";
+import {
+  buildCharacterVisualDescriptor,
+  type CharacterVisualDescriptor,
+} from "@/domain/character-visual-descriptor";
 import { assertDecodableImage } from "@/domain/image-validation";
 import { nameBasedUuid } from "@/domain/name-uuid";
-import { orderByReferenceView, REFERENCE_VIEWS } from "@/domain/reference-view";
+import {
+  orderByReferenceView,
+  REFERENCE_VIEWS,
+  type ReferenceView,
+} from "@/domain/reference-view";
 import { buildVisualAssetKey } from "@/domain/storage-keys";
 import {
   ART_BIBLE_VERSION,
@@ -75,6 +82,30 @@ export interface RequestCandidatesOptions {
 export interface DeliveredAsset {
   bytes: Uint8Array;
   contentType: string;
+}
+
+/**
+ * Generate ONE reference view for a candidate set. The per-view unit the durable
+ * M4 workflow drives as its own engine stage (one image call = one WDK step), so a
+ * function time-out replays only a single view — never the whole set — and can
+ * never re-spend on the other five. `idempotencyKey` (the workflow id) makes the
+ * candidate-set id, asset id, seed, and storage key DETERMINISTIC, so a replayed
+ * view reproduces the exact same asset/key/bytes.
+ */
+export interface GenerateCandidateViewInput {
+  characterId: string;
+  /** Which set this view belongs to (fixed to 0 for the single-set MVP). */
+  setIndex: number;
+  view: ReferenceView;
+  idempotencyKey: string;
+}
+
+/** Assemble the candidate-set record from the per-view assets already uploaded. */
+export interface AssembleCandidateSetInput {
+  characterId: string;
+  setIndex: number;
+  idempotencyKey: string;
+  assets: NewVisualAsset[];
 }
 
 function requirePrimaryFamily(actor: AuthenticatedActor): string {
@@ -154,105 +185,170 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
     return profile;
   }
 
+  /**
+   * Authorise + load the character + resolve the model-neutral inputs a candidate
+   * generation needs (descriptor + the PROSPECTIVE visual-profile version the
+   * storage key targets). Shared by the whole-set direct call and the per-view
+   * durable path, so both authorise identically and derive the same storage keys.
+   */
+  async function resolveGenerationContext(
+    actor: AuthenticatedActor,
+    characterId: string,
+    stage: string,
+  ): Promise<{
+    familyId: string;
+    descriptor: CharacterVisualDescriptor;
+    prospectiveVersion: number;
+  }> {
+    const familyId = await authorise(actor, "character:manage");
+    const profile = await loadCharacterOrThrow(familyId, characterId, stage);
+    if (profile.status === "retired") {
+      throw invalidCommandError({
+        safeMessage: "Resting characters cannot be repainted.",
+        internalDetail: `Character ${characterId} is retired.`,
+        stage,
+      });
+    }
+    const descriptor = buildCharacterVisualDescriptor(profile);
+    // Candidates target the character's NEXT visual-profile version for their
+    // storage key (the eventual approved version is assigned on approval).
+    const prospectiveVersion =
+      (await visualAssetRepository.getLatestVisualProfileVersion(
+        familyId,
+        characterId,
+      )) + 1;
+    return { familyId, descriptor, prospectiveVersion };
+  }
+
+  /**
+   * The candidate-set id for `(idempotencyKey, setIndex)`. Deterministic under a
+   * durable workflow (an idempotent re-run reproduces it) and random for a direct,
+   * non-durable call. Every downstream id/seed/key derives from it, so determinism
+   * flows automatically.
+   */
+  async function candidateSetIdFor(
+    idempotencyKey: string | undefined,
+    setIndex: number,
+  ): Promise<string> {
+    return idempotencyKey
+      ? await nameBasedUuid(idempotencyKey, "set", String(setIndex))
+      : globalThis.crypto.randomUUID();
+  }
+
+  /**
+   * Render ONE reference view via the image port, validate it, upload it PRIVATE,
+   * and return its quarantined-asset metadata (bytes are in storage, never in the
+   * return value or any workflow payload). The single paid unit of candidate
+   * generation — this is what one durable engine stage does exactly once.
+   */
+  async function paintOneView(args: {
+    familyId: string;
+    characterId: string;
+    descriptor: CharacterVisualDescriptor;
+    prospectiveVersion: number;
+    candidateSetId: string;
+    view: ReferenceView;
+    idempotencyKey: string | undefined;
+  }): Promise<NewVisualAsset> {
+    const {
+      familyId,
+      characterId,
+      descriptor,
+      prospectiveVersion,
+      candidateSetId,
+      view,
+      idempotencyKey,
+    } = args;
+    const assetId = idempotencyKey
+      ? await nameBasedUuid(candidateSetId, "asset", view)
+      : globalThis.crypto.randomUUID();
+    const seed = seedFrom(candidateSetId, view);
+    const image = await imageModel.generate({
+      view,
+      descriptor,
+      artBibleVersion: ART_BIBLE_VERSION,
+      seed,
+    });
+
+    // MIME + decode validation BEFORE the private upload.
+    assertDecodableImage(image.bytes, image.contentType);
+    const checksum = await sha256Hex(image.bytes);
+    const key = buildVisualAssetKey({
+      familyId,
+      characterId,
+      version: prospectiveVersion,
+      assetId,
+    });
+
+    const stored = await objectStorage.put({
+      key,
+      bytes: image.bytes,
+      contentType: image.contentType,
+      checksum,
+    });
+    if (stored.size !== image.bytes.byteLength) {
+      throw generationFailedError({
+        internalDetail: `Stored size ${stored.size} != generated ${image.bytes.byteLength} for ${key}.`,
+        stage: "visual.upload",
+      });
+    }
+
+    return {
+      id: assetId,
+      view,
+      storageKey: key,
+      contentType: image.contentType,
+      checksum,
+      byteSize: image.bytes.byteLength,
+      width: image.width,
+      height: image.height,
+      model: image.model,
+      seed: image.seed,
+    };
+  }
+
   return {
     /**
-     * Generate `setCount` candidate reference sets for a character. Each view is
-     * rendered via the image port, validated, uploaded PRIVATE, and recorded as a
-     * quarantined asset. Returns the freshly created candidate sets.
+     * Generate `setCount` candidate reference sets for a character (the direct,
+     * NON-durable path — e.g. tests). Each view is painted + validated + uploaded
+     * and the set recorded. The durable M4 workflow does NOT call this; it drives
+     * {@link generateCandidateView} per view + {@link assembleCandidateSet}, so a
+     * function time-out never re-spends more than a single view.
      */
     async requestCandidateSets(
       actor: AuthenticatedActor,
       input: unknown,
       options: RequestCandidatesOptions = {},
     ): Promise<CandidateSet[]> {
-      const familyId = await authorise(actor, "character:manage");
       const { characterId, setCount } =
         RequestCandidatesCommandSchema.parse(input);
-      const profile = await loadCharacterOrThrow(
-        familyId,
+      const ctx = await resolveGenerationContext(
+        actor,
         characterId,
         "visual.request",
       );
-      if (profile.status === "retired") {
-        throw invalidCommandError({
-          safeMessage: "Resting characters cannot be repainted.",
-          internalDetail: `Character ${characterId} is retired.`,
-          stage: "visual.request",
-        });
-      }
-
-      const descriptor = buildCharacterVisualDescriptor(profile);
-      // Candidates target the character's NEXT visual-profile version for their
-      // storage key (the eventual approved version is assigned on approval).
-      const prospectiveVersion =
-        (await visualAssetRepository.getLatestVisualProfileVersion(
-          familyId,
-          characterId,
-        )) + 1;
-
       const { idempotencyKey } = options;
       const created: CandidateSet[] = [];
       for (let setIndex = 0; setIndex < setCount; setIndex++) {
-        // Deterministic under a durable workflow (idempotent re-run), random
-        // otherwise. The id itself carries the determinism, so downstream seeds
-        // and storage keys (derived from it) follow automatically.
-        const candidateSetId = idempotencyKey
-          ? await nameBasedUuid(idempotencyKey, "set", String(setIndex))
-          : globalThis.crypto.randomUUID();
+        const candidateSetId = await candidateSetIdFor(
+          idempotencyKey,
+          setIndex,
+        );
         const assets: NewVisualAsset[] = [];
-
         for (const view of REFERENCE_VIEWS) {
-          const assetId = idempotencyKey
-            ? await nameBasedUuid(candidateSetId, "asset", view)
-            : globalThis.crypto.randomUUID();
-          const seed = seedFrom(candidateSetId, view);
-          const image = await imageModel.generate({
-            view,
-            descriptor,
-            artBibleVersion: ART_BIBLE_VERSION,
-            seed,
-          });
-
-          // MIME + decode validation BEFORE the private upload.
-          assertDecodableImage(image.bytes, image.contentType);
-          const checksum = await sha256Hex(image.bytes);
-          const key = buildVisualAssetKey({
-            familyId,
-            characterId,
-            version: prospectiveVersion,
-            assetId,
-          });
-
-          const stored = await objectStorage.put({
-            key,
-            bytes: image.bytes,
-            contentType: image.contentType,
-            checksum,
-          });
-          if (stored.size !== image.bytes.byteLength) {
-            throw generationFailedError({
-              internalDetail: `Stored size ${stored.size} != generated ${image.bytes.byteLength} for ${key}.`,
-              stage: "visual.upload",
-            });
-          }
-
-          assets.push({
-            id: assetId,
-            view,
-            storageKey: key,
-            contentType: image.contentType,
-            checksum,
-            byteSize: image.bytes.byteLength,
-            width: image.width,
-            height: image.height,
-            model: image.model,
-            seed: image.seed,
-          });
+          assets.push(
+            await paintOneView({
+              ...ctx,
+              characterId,
+              candidateSetId,
+              view,
+              idempotencyKey,
+            }),
+          );
         }
-
         created.push(
           await visualAssetRepository.recordCandidateSet({
-            familyId,
+            familyId: ctx.familyId,
             characterId,
             candidateSetId,
             assets,
@@ -260,6 +356,60 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
         );
       }
       return created;
+    },
+
+    /**
+     * Paint ONE reference view for a candidate set (the durable per-stage unit).
+     * Authorises + loads the character every call (defence in depth; cheap reads),
+     * derives the deterministic candidate-set + asset ids from `idempotencyKey`,
+     * and returns the quarantined-asset metadata for the workflow to persist as its
+     * stage output. Recording the set is deferred to {@link assembleCandidateSet}.
+     */
+    async generateCandidateView(
+      actor: AuthenticatedActor,
+      input: GenerateCandidateViewInput,
+    ): Promise<NewVisualAsset> {
+      const ctx = await resolveGenerationContext(
+        actor,
+        input.characterId,
+        "visual.request",
+      );
+      const candidateSetId = await candidateSetIdFor(
+        input.idempotencyKey,
+        input.setIndex,
+      );
+      return paintOneView({
+        ...ctx,
+        characterId: input.characterId,
+        candidateSetId,
+        view: input.view,
+        idempotencyKey: input.idempotencyKey,
+      });
+    },
+
+    /**
+     * Assemble the quarantined candidate-set record from the per-view assets the
+     * paint stages already uploaded (the final durable stage). The candidate-set id
+     * is re-derived from the same `(idempotencyKey, setIndex)`, so the record links
+     * exactly the assets those stages produced; the repository insert is
+     * `onConflictDoNothing`, so a replay collapses to the same set.
+     */
+    async assembleCandidateSet(
+      actor: AuthenticatedActor,
+      input: AssembleCandidateSetInput,
+    ): Promise<CandidateSet> {
+      const familyId = await authorise(actor, "character:manage");
+      await loadCharacterOrThrow(familyId, input.characterId, "visual.request");
+      const candidateSetId = await candidateSetIdFor(
+        input.idempotencyKey,
+        input.setIndex,
+      );
+      return visualAssetRepository.recordCandidateSet({
+        familyId,
+        characterId: input.characterId,
+        candidateSetId,
+        assets: input.assets,
+      });
     },
 
     /** The character's quarantined candidate sets awaiting review. */

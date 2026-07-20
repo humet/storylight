@@ -24,6 +24,7 @@ import {
   type SyntheticStageKey,
 } from "@/application/workflows/synthetic-workflow";
 import { GENERATE_CHARACTER_CANDIDATES_TYPE } from "@/application/workflows/generate-character-candidates-workflow";
+import { REFERENCE_VIEWS } from "@/domain/reference-view";
 import type { AuthenticatedActor } from "@/domain/actor";
 import type { CharacterProfilePayload } from "@/domain/character";
 import { generationFailedError, invalidCommandError } from "@/lib/errors";
@@ -836,7 +837,7 @@ describe("real consumer: generate character candidates on the engine", () => {
         actor,
         GENERATE_CHARACTER_CANDIDATES_TYPE,
         `idem-${character.id}`,
-        { characterId: character.id, setCount: 1 },
+        { characterId: character.id },
       );
       await engine.runToCompletion(handle.workflowId);
 
@@ -845,10 +846,13 @@ describe("real consumer: generate character candidates on the engine", () => {
         character.id,
       );
       expect(afterFirst).toHaveLength(1);
+      // One set of all six canonical views (one image call per view stage).
+      expect(afterFirst[0].assets).toHaveLength(REFERENCE_VIEWS.length);
 
-      // Simulate a crash whose SIDE EFFECT (the candidate set) committed but whose
-      // stage-output write was lost: drop the output and reset the run so the
-      // handler is forced to execute a second time.
+      // Simulate a crash whose SIDE EFFECTS (uploaded views + the recorded set)
+      // committed but whose stage-output writes were all lost: drop every output
+      // and reset the run to the FIRST per-view stage so every paint stage AND the
+      // assembly stage are forced to execute a second time.
       await db
         .delete(workflowStageOutputs)
         .where(eq(workflowStageOutputs.workflowId, handle.workflowId));
@@ -856,14 +860,15 @@ describe("real consumer: generate character candidates on the engine", () => {
         .update(workflowExecutions)
         .set({
           status: "waiting",
-          currentStage: "paint-candidates",
+          currentStage: `paint-${REFERENCE_VIEWS[0]}`,
           leaseOwner: null,
           leaseExpiresAt: null,
           completedAt: null,
         })
         .where(eq(workflowExecutions.id, handle.workflowId));
 
-      // Re-drive: the handler re-runs with the SAME deterministic ids.
+      // Re-drive: every per-view stage re-runs with the SAME deterministic asset
+      // ids/keys/bytes and the assembly re-derives the SAME candidate-set id.
       const redrive = await engine.runToCompletion(handle.workflowId);
       expect(redrive.finalStatus).toBe("completed");
 
@@ -874,6 +879,7 @@ describe("real consumer: generate character candidates on the engine", () => {
       );
       expect(afterSecond).toHaveLength(1);
       expect(afterSecond[0].id).toBe(afterFirst[0].id);
+      expect(afterSecond[0].assets).toHaveLength(REFERENCE_VIEWS.length);
     } finally {
       await rm(storageRoot, { recursive: true, force: true });
     }
