@@ -129,6 +129,25 @@ export function createGatewayLanguageModel(): LanguageModel {
           };
         }
 
+        // TEMP DIAGNOSTIC (remove after): surface credential presence + raw
+        // provider message to runtime logs to pinpoint the prod failure.
+        console.error("[gw-diag]", {
+          keySource: process.env.AI_GATEWAY_API_KEY
+            ? "env-key"
+            : process.env.VERCEL_OIDC_TOKEN
+              ? "oidc"
+              : "none",
+          target: request.target,
+          status:
+            (error as { statusCode?: number })?.statusCode ??
+            (error as { cause?: { statusCode?: number } })?.cause?.statusCode,
+          name: (error as { name?: string })?.name,
+          raw: (error instanceof Error ? error.message : String(error)).slice(
+            0,
+            300,
+          ),
+        });
+
         // Availability failures throw retryable so the pipeline tries fallbacks;
         // everything else is a non-retryable generation failure. Raw provider
         // messages stay in internalDetail — never surfaced to a client.
