@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import type { OneOffPlan } from "@/domain/story-draft";
+import type { SceneCompanion } from "@/domain/image-request";
 import type {
   ReviewArtifact,
   ReviewDecisionKind,
@@ -61,6 +62,14 @@ export const illustrationAspect = pgEnum("illustration_aspect", [
   "portrait",
   "landscape",
   "square",
+]);
+
+/** Closed time-of-day vocabulary for an illustration spec's setting (ADR-008 part 4). */
+export const illustrationTimeOfDay = pgEnum("illustration_time_of_day", [
+  "day",
+  "dawn",
+  "dusk",
+  "night",
 ]);
 
 export const readingAgeBand = pgEnum("reading_age_band", [
@@ -242,6 +251,20 @@ export const illustrationSpecs = pgTable(
     sceneDescription: text("scene_description").notNull(),
     aspect: illustrationAspect("aspect").notNull(),
     schemaVersion: text("schema_version").notNull(),
+    /**
+     * Recurring non-child companion descriptors declared for this scene (ADR-008
+     * part 3). Additive, DEFAULTED to `[]` so every pre-ADR-008 row stays valid and
+     * reads back as "no companions" (safe absence). Descriptors only — a companion
+     * has no reference-image anchor yet (that is a deferred follow-up).
+     */
+    companions: jsonb("companions")
+      .$type<SceneCompanion[]>()
+      .notNull()
+      .default([]),
+    /** Canonical setting location (ADR-008 part 4); NULL when not carried. */
+    settingLocation: varchar("setting_location", { length: 120 }),
+    /** Canonical time-of-day (ADR-008 part 4); NULL when not carried. */
+    settingTimeOfDay: illustrationTimeOfDay("setting_time_of_day"),
     /**
      * DB character ids of the children who appear in this scene (M9). Populated at
      * publish from the workflow's active cast so the image job knows whose approved

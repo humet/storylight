@@ -131,7 +131,7 @@ const REVIEW_BLOCK = {
 };
 
 const ILLUSTRATION = {
-  schemaVersion: "illustration-plan.v1",
+  schemaVersion: "illustration-plan.v2",
   illustrations: [
     {
       anchorKey: "anchor-1",

@@ -52,6 +52,50 @@ describe("classifyVerdict", () => {
     expect(c.blocking).toBe(false);
     expect(c.acceptable).toBe(false);
   });
+
+  // --- ADR-008 part 3/5: companion species is BLOCKING ------------------
+
+  it("accepts a verdict whose expected companion has the correct species", () => {
+    const c = classifyVerdict({
+      ...clean(),
+      companionsByKey: [{ companionKey: "pip-the-owl", matches: true }],
+    });
+    expect(c.acceptable).toBe(true);
+    expect(c.blocking).toBe(false);
+  });
+
+  it("treats a WRONG companion species as BLOCKING (Pip drawn as a squirrel)", () => {
+    const c = classifyVerdict({
+      ...clean(),
+      companionsByKey: [{ companionKey: "pip-the-owl", matches: false }],
+    });
+    expect(c.blocking).toBe(true);
+    expect(c.acceptable).toBe(false);
+    expect(c.reasons.join(" ")).toContain("wrong companion species");
+  });
+
+  it("treats n=0 companions as no companion check (safe absence)", () => {
+    expect(
+      classifyVerdict({ ...clean(), companionsByKey: [] }).acceptable,
+    ).toBe(true);
+    // A verdict with the field entirely omitted is also fine.
+    expect(classifyVerdict(clean()).acceptable).toBe(true);
+  });
+
+  // --- ADR-008 part 4/5: setting mismatch is NON-blocking ---------------
+
+  it("treats a setting/time-of-day mismatch as NON-blocking but not acceptable", () => {
+    const c = classifyVerdict({ ...clean(), settingConsistent: false });
+    expect(c.blocking).toBe(false);
+    expect(c.acceptable).toBe(false);
+    expect(c.reasons.join(" ")).toContain("setting or time-of-day mismatch");
+  });
+
+  it("treats an absent settingConsistent as consistent (skip)", () => {
+    const c = classifyVerdict(clean());
+    expect(c.acceptable).toBe(true);
+    expect(c.reasons.join(" ")).not.toContain("setting");
+  });
 });
 
 describe("decideImageReview", () => {
@@ -100,6 +144,37 @@ describe("decideImageReview", () => {
         "approve",
       );
     }
+  });
+
+  it("NEVER approves a wrong companion species — it drives the ladder to manual (ADR-008)", () => {
+    // Fixture: "companion changes species" (Pip the owl drawn as a squirrel).
+    const wrongSpecies: VisionVerdict = {
+      ...clean(),
+      companionsByKey: [{ companionKey: "pip-the-owl", matches: false }],
+    };
+    expect(
+      decideImageReview({ verdict: wrongSpecies, phase: "initial" }).kind,
+    ).toBe("repair");
+    expect(
+      decideImageReview({ verdict: wrongSpecies, phase: "repair" }).kind,
+    ).toBe("escalate");
+    expect(
+      decideImageReview({ verdict: wrongSpecies, phase: "escalation" }).kind,
+    ).toBe("manual");
+  });
+
+  it("walks the repair ladder for a setting mismatch (night scene rendered in daylight)", () => {
+    // Fixture: "night scene rendered in daylight" — non-blocking, targeted repair.
+    const daylight = { ...clean(), settingConsistent: false };
+    expect(
+      decideImageReview({ verdict: daylight, phase: "initial" }).kind,
+    ).toBe("repair");
+    expect(decideImageReview({ verdict: daylight, phase: "repair" }).kind).toBe(
+      "escalate",
+    );
+    expect(
+      decideImageReview({ verdict: daylight, phase: "escalation" }).kind,
+    ).toBe("manual");
   });
 });
 

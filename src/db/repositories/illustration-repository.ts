@@ -44,6 +44,9 @@ export function createIllustrationRepository(
           caption: illustrationSpecs.caption,
           sceneDescription: illustrationSpecs.sceneDescription,
           aspect: illustrationSpecs.aspect,
+          companions: illustrationSpecs.companions,
+          settingLocation: illustrationSpecs.settingLocation,
+          settingTimeOfDay: illustrationSpecs.settingTimeOfDay,
           subjectCharacterIds: illustrationSpecs.subjectCharacterIds,
           prominentCharacterId: illustrationSpecs.prominentCharacterId,
           storyType: stories.type,
@@ -77,6 +80,16 @@ export function createIllustrationRepository(
         caption: row.caption,
         sceneDescription: row.sceneDescription,
         aspect: row.aspect,
+        companions: row.companions ?? [],
+        // Setting is carried only when BOTH columns are present (they are written
+        // together); otherwise it is absent (safe absence — review skips it).
+        setting:
+          row.settingLocation && row.settingTimeOfDay
+            ? {
+                location: row.settingLocation,
+                timeOfDay: row.settingTimeOfDay,
+              }
+            : null,
         subjectCharacterIds: row.subjectCharacterIds,
         prominentCharacterId: row.prominentCharacterId ?? null,
         latestRevisionNumber: latest?.n ?? 0,

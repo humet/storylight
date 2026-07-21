@@ -37,6 +37,13 @@ export function approvingVerdict(request: VisionReviewRequest): VisionVerdict {
     propConsistent: true,
     toneAppropriate: true,
     styleConsistent: true,
+    // ADR-008: every expected companion present with the correct species, and the
+    // setting consistent — so the offline pipeline reaches an approved image.
+    companionsByKey: (request.expectedCompanions ?? []).map((c) => ({
+      companionKey: c.key,
+      matches: true,
+    })),
+    settingConsistent: true,
   };
 }
 

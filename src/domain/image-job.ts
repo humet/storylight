@@ -34,6 +34,18 @@ export interface ChildIdentityVerdict {
 }
 
 /**
+ * Per-companion species/appearance verdict (ADR-008 part 3/5). One entry per
+ * EXPECTED recurring non-child character. `matches` is true only when the companion
+ * appears with the CORRECT species (and appearance) — a wrong or absent companion
+ * species is `false`. Wrong companion species is BLOCKING (rule 7 class): it can
+ * never be approved, exactly like a wrong child identity.
+ */
+export interface CompanionSpeciesVerdict {
+  companionKey: string;
+  matches: boolean;
+}
+
+/**
  * The STRUCTURED vision-review verdict (`image-generation.md` "Vision review":
  * identity per child, count, outfit/prop continuity, tone, style). Produced by the
  * multimodal review port; never authored by the generation model.
@@ -47,6 +59,20 @@ export interface VisionVerdict {
   propConsistent: boolean;
   toneAppropriate: boolean;
   styleConsistent: boolean;
+  /**
+   * One entry per EXPECTED recurring non-child companion (ADR-008 part 3/5).
+   * OPTIONAL for safe absence: a pre-ADR-008 verdict (no companions expected) omits
+   * it ⇒ treated as an empty list ⇒ no companion check. A wrong companion species
+   * (`matches:false`) is BLOCKING.
+   */
+  companionsByKey?: CompanionSpeciesVerdict[];
+  /**
+   * Whether the rendered setting + time-of-day match the canonical setting (ADR-008
+   * part 4/5). OPTIONAL for safe absence: when omitted (no setting expected, or a
+   * pre-ADR-008 verdict) it is treated as consistent ⇒ the setting check is skipped.
+   * A `false` value is a NON-blocking failure (drives targeted repair, like outfit).
+   */
+  settingConsistent?: boolean;
   /** Optional free-text notes (internal; never client-facing). */
   notes?: string;
 }
@@ -78,10 +104,28 @@ export function classifyVerdict(verdict: VisionVerdict): VerdictClassification {
       `wrong character count (expected ${verdict.expectedCount}, observed ${verdict.observedCount})`,
     );
   }
-  const blocking = identityMismatch.length > 0 || countMismatch;
+  // ADR-008 part 3/5: a wrong (or absent) companion species is BLOCKING — the
+  // sibling of rule 7 (a companion "Pip the owl" must never be redrawn as a
+  // squirrel). Absent field ⇒ empty list ⇒ no companion check (safe absence).
+  const companionMismatch = (verdict.companionsByKey ?? []).filter(
+    (c) => !c.matches,
+  );
+  for (const companion of companionMismatch) {
+    reasons.push(`wrong companion species for "${companion.companionKey}"`);
+  }
+  const blocking =
+    identityMismatch.length > 0 ||
+    countMismatch ||
+    companionMismatch.length > 0;
 
   if (!verdict.outfitConsistent) reasons.push("outfit continuity broken");
   if (!verdict.propConsistent) reasons.push("plot-critical prop wrong");
+  // ADR-008 part 4/5: setting/time-of-day mismatch is a NON-blocking failure (like
+  // outfit) — it triggers targeted repair and blocks approval while present, but is
+  // never blocking. Absent field ⇒ treated as consistent (skip).
+  if (verdict.settingConsistent === false) {
+    reasons.push("setting or time-of-day mismatch");
+  }
   if (!verdict.toneAppropriate) reasons.push("emotional tone off");
   if (!verdict.styleConsistent) reasons.push("style inconsistent");
 

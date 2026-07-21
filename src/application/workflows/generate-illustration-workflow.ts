@@ -19,6 +19,9 @@ import {
   buildImageSceneRequest,
   type ImageSceneRequest,
   type IllustrationAspect,
+  type SceneCast,
+  type SceneCompanion,
+  type SceneSetting,
 } from "@/domain/image-request";
 import {
   decideImageReview,
@@ -111,6 +114,12 @@ const REFERENCE_BUDGET = { maxReferences: 8 };
 interface PreparePayload {
   subjects: { characterKey: string; prominent: boolean }[];
   references: SelectedReference[];
+  /** Canonical cast (names + count) for the ADR-008 part-1 generation directive. */
+  cast: SceneCast;
+  /** Recurring non-child companions declared for this scene (ADR-008 part 3). */
+  companions: SceneCompanion[];
+  /** Canonical setting + time-of-day (ADR-008 part 4), or null when not carried. */
+  setting: SceneSetting | null;
   expectedChildren: { characterKey: string }[];
   expectedCount: number;
 }
@@ -337,6 +346,12 @@ export function createGenerateIllustrationWorkflow(
       spec: { scene: job.sceneDescription, aspect },
       artBible: MVP_ART_BIBLE,
       placements,
+      // Older in-flight payloads (pre-ADR-008) may lack `cast`/`companions`/
+      // `setting`; the builder treats absent values as "no directive", so a resume
+      // stays correct (safe absence).
+      cast: prep.cast,
+      companions: prep.companions ?? [],
+      ...(prep.setting ? { setting: prep.setting } : {}),
       references: prep.references,
       continuityNotes: [],
       seed: seedFrom(execution.id, phase),
@@ -456,6 +471,11 @@ export function createGenerateIllustrationWorkflow(
         imageContentType: generated.contentType,
         expectedChildren: prep.expectedChildren,
         expectedCount: prep.expectedCount,
+        // ADR-008 part 3/4: the review verifies the scene against canonical facts —
+        // each companion's species and the setting/time-of-day (safe absence when
+        // none is carried).
+        expectedCompanions: prep.companions ?? [],
+        ...(prep.setting ? { setting: prep.setting } : {}),
         outfitNotes: [],
         propNotes: [],
         tone: job.caption,
@@ -547,6 +567,7 @@ export function createGenerateIllustrationWorkflow(
 
           const children: SceneChild[] = [];
           const subjects: { characterKey: string; prominent: boolean }[] = [];
+          const cast: SceneCast = { children: [] };
           for (const characterId of job.subjectCharacterIds) {
             const character = await characterRepository.getCharacter(
               execution.familyId,
@@ -570,6 +591,13 @@ export function createGenerateIllustrationWorkflow(
               references: refs.map((r) => ({ assetId: r.id, view: r.view })),
             });
             subjects.push({ characterKey: character.key, prominent });
+            // The child's appearance is defined by the reference IMAGE, not prose;
+            // the cast carries only the name so the prompt can enforce an exact,
+            // named child count (ADR-008 part 1).
+            cast.children.push({
+              characterKey: character.key,
+              displayName: character.displayName,
+            });
           }
 
           const references = selectReferences(
@@ -579,6 +607,12 @@ export function createGenerateIllustrationWorkflow(
           const payload: PreparePayload = {
             subjects,
             references,
+            cast,
+            // Companions + setting are CANONICAL scene facts carried on the spec
+            // (declared in the illustration plan, persisted at publish). A
+            // pre-ADR-008 spec has none ⇒ empty/null ⇒ no directive, review skips.
+            companions: job.companions,
+            setting: job.setting,
             expectedChildren: children.map((c) => ({
               characterKey: c.characterKey,
             })),

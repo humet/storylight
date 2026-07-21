@@ -136,12 +136,22 @@ function reviewFixture(): unknown {
 function illustrationFixture(ctx: CanonicalContext): unknown {
   const keys = ctx.anchorKeys ?? [];
   return {
-    schemaVersion: "illustration-plan.v1",
+    schemaVersion: "illustration-plan.v2",
     illustrations: keys.map((anchorKey) => ({
       anchorKey,
       caption: "The garden glows softly in the evening light.",
       sceneDescription: "A small child in a safe garden at dusk, warm light.",
       aspect: "landscape",
+      // ADR-008: a recurring companion + the setting, consistent with the plan
+      // fixture (a friendly firefly lights the path; a garden at dusk).
+      companions: [
+        {
+          key: "pip-the-firefly",
+          species: "firefly",
+          appearance: "a friendly firefly with a soft golden glow",
+        },
+      ],
+      setting: { location: "A small, safe garden", timeOfDay: "dusk" },
     })),
   };
 }

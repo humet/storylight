@@ -72,9 +72,9 @@ function buildInstruction(request: VisionReviewRequest): string {
     "You are a strict quality reviewer for a children's picture book. Compare the FINAL illustration (last image) against the attached identity reference image(s) and report ONLY what you observe. Do not approve or reject — just report.",
     "",
     `EXPECTED CHILDREN (one identity verdict per key): ${expectedKeys || "(none)"}.`,
-    `EXPECTED TOTAL CHARACTERS IN FRAME: ${request.expectedCount}.`,
+    `EXPECTED CHILDREN IN FRAME: ${request.expectedCount}.`,
     "For identityByChild: for EACH expected key, set matches=true only if that child in the final illustration clearly has the SAME face and features as their reference; otherwise matches=false.",
-    "For observedCount: count the distinct people actually visible in the final illustration.",
+    "For observedCount: count only the distinct CHILDREN (people who appear to be children) visible in the final illustration. Do NOT count adults, companions, or animals — they are reviewed separately.",
   ];
   if (request.outfitNotes.length > 0) {
     lines.push(
@@ -84,16 +84,66 @@ function buildInstruction(request: VisionReviewRequest): string {
   if (request.propNotes.length > 0) {
     lines.push(`Expected prop continuity: ${request.propNotes.join("; ")}.`);
   }
+
+  // ADR-008 part 3: recurring non-child companions the scene must depict with the
+  // correct species. Companions have no reference image — they are described here.
+  const companions = request.expectedCompanions ?? [];
+  const companionKeys = companions.map((c) => c.key).join(", ");
+  if (companions.length > 0) {
+    lines.push(
+      `EXPECTED COMPANIONS (recurring non-child characters), one companionsByKey verdict per key: ${companionKeys}.`,
+    );
+    for (const c of companions) {
+      lines.push(`  - "${c.key}" is a ${c.species} (${c.appearance}).`);
+    }
+    lines.push(
+      "For companionsByKey: for EACH expected companion, set matches=true ONLY if a character of that exact species clearly appears; if it is a different animal/creature or is absent, matches=false.",
+    );
+  }
+
+  // ADR-008 part 4: the canonical setting + time-of-day.
+  if (request.setting) {
+    lines.push(
+      `EXPECTED SETTING: ${request.setting.location} — time of day: ${request.setting.timeOfDay}.`,
+      "For settingConsistent: set true ONLY if the location and the time-of-day lighting (sky, light) match the expected setting; a night scene rendered in daylight (or vice-versa) is settingConsistent=false.",
+    );
+  }
+
   lines.push(
     `Intended emotional tone (must be age-appropriate): ${request.tone}.`,
     `Style must match the pinned Art Bible (${request.artBibleVersion}): warm gouache storybook illustration, clear faces, no photorealism, no 3D, no text in the image.`,
     "Set outfitConsistent / propConsistent / toneAppropriate / styleConsistent accordingly.",
     "",
     "Reply with ONLY a compact JSON object (no markdown, no prose) of exactly this shape:",
-    `{"identityByChild":[{"characterKey":"<key>","matches":true|false}],"observedCount":<int>,"outfitConsistent":true|false,"propConsistent":true|false,"toneAppropriate":true|false,"styleConsistent":true|false,"notes":"<short>"}`,
+    jsonShape(companions.length > 0, Boolean(request.setting)),
     `Include one identityByChild entry for each expected key (${expectedKeys || "none"}).`,
   );
+  if (companions.length > 0) {
+    lines.push(
+      `Include one companionsByKey entry for each expected companion key (${companionKeys}).`,
+    );
+  }
   return lines.join("\n");
+}
+
+/** The exact JSON shape to request, including the ADR-008 fields only when relevant. */
+function jsonShape(withCompanions: boolean, withSetting: boolean): string {
+  const parts = [
+    `"identityByChild":[{"characterKey":"<key>","matches":true|false}]`,
+    `"observedCount":<int>`,
+    `"outfitConsistent":true|false`,
+    `"propConsistent":true|false`,
+    `"toneAppropriate":true|false`,
+    `"styleConsistent":true|false`,
+  ];
+  if (withCompanions) {
+    parts.push(
+      `"companionsByKey":[{"companionKey":"<key>","matches":true|false}]`,
+    );
+  }
+  if (withSetting) parts.push(`"settingConsistent":true|false`);
+  parts.push(`"notes":"<short>"`);
+  return `{${parts.join(",")}}`;
 }
 
 function buildMessages(
@@ -160,6 +210,13 @@ export function createGatewayVisionModel(): VisionModel {
           const reported = new Map(
             wire.identityByChild.map((c) => [c.characterKey, c.matches]),
           );
+          const reportedCompanions = new Map(
+            (wire.companionsByKey ?? []).map((c) => [
+              c.companionKey,
+              c.matches,
+            ]),
+          );
+          const expectedCompanions = request.expectedCompanions ?? [];
           const verdict: VisionVerdict = {
             // One verdict per EXPECTED child; an unreported child is not a match
             // (rule 7: an unverified identity is never approvable).
@@ -173,6 +230,18 @@ export function createGatewayVisionModel(): VisionModel {
             propConsistent: wire.propConsistent,
             toneAppropriate: wire.toneAppropriate,
             styleConsistent: wire.styleConsistent,
+            // One verdict per EXPECTED companion; an unreported companion is not a
+            // match (ADR-008: a wrong/absent companion species is blocking, so it
+            // must never be fabricated as a pass). Empty ⇒ no companion check.
+            companionsByKey: expectedCompanions.map((c) => ({
+              companionKey: c.key,
+              matches: reportedCompanions.get(c.key) ?? false,
+            })),
+            // Trust the setting verdict only when a setting was expected; otherwise
+            // skip (consistent). Absent-when-expected ⇒ skip (non-blocking, safe).
+            settingConsistent: request.setting
+              ? (wire.settingConsistent ?? true)
+              : true,
             ...(wire.notes ? { notes: wire.notes } : {}),
           };
           return { verdict, model: result.response.modelId ?? route.target };

@@ -7,6 +7,7 @@ import type {
 import type { SeriesBible } from "@/domain/series-bible";
 import type { StoryDna } from "@/domain/story-dna";
 import type { OneOffPlan } from "@/domain/story-draft";
+import type { SceneCompanion, SceneSetting } from "@/domain/image-request";
 import type { ReadingProgress } from "./story-repository";
 
 /**
@@ -76,6 +77,10 @@ export interface PublishSeriesChapterInput {
     sceneDescription: string;
     aspect: "portrait" | "landscape" | "square";
     schemaVersion: string;
+    /** Recurring non-child companions for this scene (ADR-008 part 3). */
+    companions?: SceneCompanion[];
+    /** Canonical setting + time-of-day (ADR-008 part 4), if declared. */
+    setting?: SceneSetting;
     /** DB character ids of the children in this scene (drives reference selection). */
     subjectCharacterIds: string[];
     /** The most prominent child's DB id, if any. */

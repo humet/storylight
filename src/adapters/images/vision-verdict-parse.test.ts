@@ -46,4 +46,34 @@ describe("parseVisionVerdict", () => {
   it("returns null on malformed JSON", () => {
     expect(parseVisionVerdict('{"observedCount": 1,')).toBeNull();
   });
+
+  // --- ADR-008 parts 3–4: optional companion + setting verdict fields ---
+
+  it("parses the optional companionsByKey + settingConsistent fields", () => {
+    const withNew = {
+      ...VALID,
+      companionsByKey: [{ companionKey: "pip-the-owl", matches: false }],
+      settingConsistent: false,
+    };
+    const parsed = parseVisionVerdict(JSON.stringify(withNew));
+    expect(parsed?.companionsByKey).toEqual([
+      { companionKey: "pip-the-owl", matches: false },
+    ]);
+    expect(parsed?.settingConsistent).toBe(false);
+  });
+
+  it("still parses a pre-ADR-008 verdict that omits the new fields (safe absence)", () => {
+    const parsed = parseVisionVerdict(JSON.stringify(VALID));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.companionsByKey).toBeUndefined();
+    expect(parsed?.settingConsistent).toBeUndefined();
+  });
+
+  it("returns null when companionsByKey has the wrong shape", () => {
+    const bad = JSON.stringify({
+      ...VALID,
+      companionsByKey: [{ companionKey: "pip" }],
+    });
+    expect(parseVisionVerdict(bad)).toBeNull();
+  });
 });

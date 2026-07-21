@@ -2,6 +2,8 @@ import type { IllustrationState, VisionVerdict } from "@/domain/image-job";
 import type {
   ImageSceneRequest,
   IllustrationAspect,
+  SceneCompanion,
+  SceneSetting,
 } from "@/domain/image-request";
 
 /**
@@ -24,6 +26,10 @@ export interface SpecJob {
   caption: string;
   sceneDescription: string;
   aspect: IllustrationAspect;
+  /** Recurring non-child companions declared for this scene (ADR-008 part 3). */
+  companions: SceneCompanion[];
+  /** Canonical setting + time-of-day (ADR-008 part 4), or null when not carried. */
+  setting: SceneSetting | null;
   /** DB character ids of the children in this scene. */
   subjectCharacterIds: string[];
   prominentCharacterId: string | null;

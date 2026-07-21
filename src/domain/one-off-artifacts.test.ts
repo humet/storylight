@@ -4,6 +4,7 @@ import {
   crossReferenceChapterDraft,
   crossReferenceIllustrationPlan,
   crossReferenceOneOffPlan,
+  normaliseIllustrationPlan,
   normaliseOneOffPlan,
   validateOneOffPlan,
   type OneOffPlanWireLike,
@@ -136,5 +137,87 @@ describe("crossReferenceIllustrationPlan", () => {
         ["anchor-1"],
       ),
     ).toThrow();
+  });
+
+  it("rejects a duplicate companion key within one scene (ADR-008 part 3)", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v2",
+          illustrations: [
+            {
+              anchorKey: "anchor-1",
+              caption: "c",
+              sceneDescription: "s",
+              aspect: "portrait",
+              companions: [
+                { key: "pip", species: "owl", appearance: "grey" },
+                { key: "pip", species: "cat", appearance: "black" },
+              ],
+            },
+          ],
+        },
+        ["anchor-1"],
+      ),
+    ).toThrow();
+  });
+
+  it("accepts distinct companion keys", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v2",
+          illustrations: [
+            {
+              anchorKey: "anchor-1",
+              caption: "c",
+              sceneDescription: "s",
+              aspect: "portrait",
+              companions: [
+                { key: "pip", species: "owl", appearance: "grey" },
+                { key: "nib", species: "cat", appearance: "black" },
+              ],
+            },
+          ],
+        },
+        ["anchor-1"],
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("normaliseIllustrationPlan (ADR-008 parts 3–4)", () => {
+  it("trims + carries companions and setting, and omits them when absent", () => {
+    const [withExtras, plain] = normaliseIllustrationPlan({
+      schemaVersion: "illustration-plan.v2",
+      illustrations: [
+        {
+          anchorKey: "a1",
+          caption: "  c  ",
+          sceneDescription: "  s  ",
+          aspect: "landscape",
+          companions: [
+            { key: "pip", species: "  owl  ", appearance: "  grey owlet  " },
+          ],
+          setting: { location: "  the garden  ", timeOfDay: "night" },
+        },
+        {
+          anchorKey: "a2",
+          caption: "c2",
+          sceneDescription: "s2",
+          aspect: "portrait",
+        },
+      ],
+    });
+    expect(withExtras.companions).toEqual([
+      { key: "pip", species: "owl", appearance: "grey owlet" },
+    ]);
+    expect(withExtras.setting).toEqual({
+      location: "the garden",
+      timeOfDay: "night",
+    });
+    // A spec with nothing declared round-trips as a pre-ADR-008 spec (safe absence).
+    expect(plain.companions).toBeUndefined();
+    expect(plain.setting).toBeUndefined();
   });
 });

@@ -286,6 +286,9 @@ export function createStoryRepository(db: Database): StoryRepository {
               sceneDescription: s.sceneDescription,
               aspect: s.aspect,
               schemaVersion: s.schemaVersion,
+              companions: s.companions ?? [],
+              settingLocation: s.setting?.location ?? null,
+              settingTimeOfDay: s.setting?.timeOfDay ?? null,
               subjectCharacterIds: s.subjectCharacterIds,
               prominentCharacterId: s.prominentCharacterId,
             })

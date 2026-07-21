@@ -723,6 +723,8 @@ export function createCreateOneOffStoryWorkflow(
                 sceneDescription: s.sceneDescription,
                 aspect: s.aspect,
                 schemaVersion: illustrationPlanWireSchema.schemaVersion,
+                ...(s.companions ? { companions: s.companions } : {}),
+                ...(s.setting ? { setting: s.setting } : {}),
                 subjectCharacterIds,
                 prominentCharacterId,
               })),

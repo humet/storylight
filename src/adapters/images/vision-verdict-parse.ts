@@ -30,6 +30,29 @@ export const VerdictWireSchema = z.object({
   propConsistent: z.boolean(),
   toneAppropriate: z.boolean(),
   styleConsistent: z.boolean(),
+  /**
+   * ADR-008 part 3/5: per-companion species verdict. OPTIONAL with a FAIL-SAFE
+   * default — when the model omits it (a pre-ADR-008 review, or no companions were
+   * asked about) it becomes an empty list; the ADAPTER then maps each EXPECTED
+   * companion to `matches:false` if unreported, because a wrong/absent companion
+   * species is blocking and must never be fabricated as a pass (rule 7 class).
+   */
+  companionsByKey: z
+    .array(
+      z.object({
+        companionKey: z.string(),
+        matches: z.boolean(),
+      }),
+    )
+    .optional(),
+  /**
+   * ADR-008 part 4/5: setting/time-of-day verdict. OPTIONAL with a SAFE default —
+   * when absent the setting check is SKIPPED (treated as consistent). This is the
+   * safe value for a NON-blocking check: the model is only asked about the setting
+   * when one is carried, so an absent field means "nothing to check" (safe absence)
+   * rather than a hidden failure. A reported `false` drives a targeted repair.
+   */
+  settingConsistent: z.boolean().optional(),
   notes: z.string().optional(),
 });
 

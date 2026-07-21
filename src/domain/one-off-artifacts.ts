@@ -1,4 +1,5 @@
 import { invalidCommandError } from "@/lib/errors";
+import type { SceneCompanion, SceneSetting } from "./image-request";
 import type { StoryDna } from "./story-dna";
 import type { ChapterDraft, DraftAnchor, OneOffPlan } from "./story-draft";
 
@@ -43,6 +44,10 @@ export interface IllustrationPlanWireLike {
     caption: string;
     sceneDescription: string;
     aspect: "portrait" | "landscape" | "square";
+    /** ADR-008 part 3: declared recurring non-child companions (optional). */
+    companions?: { key: string; species: string; appearance: string }[];
+    /** ADR-008 part 4: declared setting + time-of-day (optional). */
+    setting?: { location: string; timeOfDay: SceneSetting["timeOfDay"] };
   }[];
 }
 
@@ -51,6 +56,13 @@ export interface IllustrationSpec {
   caption: string;
   sceneDescription: string;
   aspect: "portrait" | "landscape" | "square";
+  /**
+   * Recurring non-child companions declared canonically for this scene (ADR-008
+   * part 3). Empty/absent for a pre-ADR-008 spec or a scene with no companions.
+   */
+  companions?: SceneCompanion[];
+  /** Canonical setting + time-of-day (ADR-008 part 4); absent ⇒ not carried. */
+  setting?: SceneSetting;
 }
 
 // --- Plan ---------------------------------------------------------------
@@ -175,16 +187,47 @@ export function crossReferenceIllustrationPlan(
       });
     }
     seen.add(spec.anchorKey);
+
+    // ADR-008 part 3: a companion key must be unique WITHIN a scene (two distinct
+    // descriptors for the same key would make the enforced species ambiguous).
+    const companionKeys = new Set<string>();
+    for (const companion of spec.companions ?? []) {
+      if (companionKeys.has(companion.key)) {
+        throw invalidCommandError({
+          internalDetail: `Duplicate companion key "${companion.key}" in illustration "${spec.anchorKey}".`,
+          stage: "illustration.cross-reference",
+        });
+      }
+      companionKeys.add(companion.key);
+    }
   }
 }
 
 export function normaliseIllustrationPlan(
   wire: IllustrationPlanWireLike,
 ): IllustrationSpec[] {
-  return wire.illustrations.map((s) => ({
-    anchorKey: s.anchorKey,
-    caption: s.caption.trim(),
-    sceneDescription: s.sceneDescription.trim(),
-    aspect: s.aspect,
-  }));
+  return wire.illustrations.map((s) => {
+    const companions = (s.companions ?? []).map((c) => ({
+      key: c.key,
+      species: c.species.trim(),
+      appearance: c.appearance.trim(),
+    }));
+    return {
+      anchorKey: s.anchorKey,
+      caption: s.caption.trim(),
+      sceneDescription: s.sceneDescription.trim(),
+      aspect: s.aspect,
+      // Preserve safe absence: omit the fields entirely when nothing was declared,
+      // so a spec round-trips identically to a pre-ADR-008 one.
+      ...(companions.length > 0 ? { companions } : {}),
+      ...(s.setting
+        ? {
+            setting: {
+              location: s.setting.location.trim(),
+              timeOfDay: s.setting.timeOfDay,
+            },
+          }
+        : {}),
+    };
+  });
 }

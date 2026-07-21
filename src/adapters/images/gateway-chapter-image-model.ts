@@ -10,7 +10,12 @@ import type {
   GeneratedSceneImage,
 } from "@/application/ports/chapter-image-model";
 import type { ImageRouteResolution } from "@/domain/image-route";
-import type { ImageSceneRequest } from "@/domain/image-request";
+import {
+  describeCastForPrompt,
+  describeCompanionsForPrompt,
+  describeSettingForPrompt,
+  type ImageSceneRequest,
+} from "@/domain/image-request";
 import type { ReferenceImage } from "@/domain/reference-image";
 import { REFERENCE_VIEW_LABELS } from "@/domain/reference-view";
 import { generationFailedError, isDomainError } from "@/lib/errors";
@@ -81,14 +86,39 @@ function buildInstruction(request: ImageSceneRequest): string {
     `SCENE: ${request.scene}`,
   ];
 
+  // ADR-008 part 4: the canonical setting + time-of-day (so a night scene is not
+  // rendered in daylight). Model-neutral directive lines; empty ⇒ nothing pushed.
+  for (const directive of describeSettingForPrompt(request.setting)) {
+    lines.push(directive);
+  }
+
   if (request.placements.length > 0) {
-    const cast = request.placements
-      .map(
-        (p) =>
-          `${p.characterKey}${p.prominent ? " (prominent)" : " (supporting)"}`,
-      )
+    // Prefer the human display name (from the canonical cast) over the opaque
+    // character key so the prompt names the child alongside its identity reference.
+    const nameByKey = new Map(
+      request.cast.children.map((c) => [c.characterKey, c.displayName]),
+    );
+    const inFrame = request.placements
+      .map((p) => {
+        const label = nameByKey.get(p.characterKey) ?? p.characterKey;
+        return `${label}${p.prominent ? " (prominent)" : " (supporting)"}`;
+      })
       .join(", ");
-    lines.push(`CHARACTERS IN FRAME (exactly these): ${cast}.`);
+    lines.push(`CHARACTERS IN FRAME (exactly these): ${inFrame}.`);
+  }
+
+  // ADR-008 part 1: the explicit named child count + no-duplication directive —
+  // the lever that removes the "two identical children" failure a reference image
+  // alone does not prevent.
+  const castDirectives = describeCastForPrompt(request.cast);
+  for (const directive of castDirectives) {
+    lines.push(directive);
+  }
+
+  // ADR-008 part 3: pin each recurring companion's species + appearance so a
+  // companion is not redrawn as a different animal from the prose alone.
+  for (const directive of describeCompanionsForPrompt(request.companions)) {
+    lines.push(directive);
   }
 
   if (request.continuityNotes.length > 0) {

@@ -1,5 +1,6 @@
 import type { VisionVerdict } from "@/domain/image-job";
 import type { ImageRouteResolution } from "@/domain/image-route";
+import type { SceneCompanion, SceneSetting } from "@/domain/image-request";
 import type { ReferenceImage } from "@/domain/reference-image";
 
 /**
@@ -25,6 +26,17 @@ export interface VisionReviewRequest {
   expectedChildren: { characterKey: string }[];
   /** Total characters expected in the frame (count check). */
   expectedCount: number;
+  /**
+   * Recurring non-child companions the scene must depict with the correct species
+   * (ADR-008 part 3/5). Empty/absent ⇒ no companion check. A wrong companion
+   * species reported here is BLOCKING (classified by `classifyVerdict`).
+   */
+  expectedCompanions?: SceneCompanion[];
+  /**
+   * The canonical setting + time-of-day the render must match (ADR-008 part 4/5).
+   * Absent ⇒ the setting check is skipped (safe absence). A mismatch is NON-blocking.
+   */
+  setting?: SceneSetting;
   /** Continuity expectations the review checks (internal, model-neutral). */
   outfitNotes: string[];
   propNotes: string[];
