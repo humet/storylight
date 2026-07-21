@@ -982,6 +982,7 @@ function payload(displayName: string): CharacterProfilePayload {
     displayName,
     apparentAge: 7,
     pronouns: ["they", "them"],
+    appearanceNotes: null,
     narrativeIdentity: {
       personalityTraits: [],
       strengths: [],

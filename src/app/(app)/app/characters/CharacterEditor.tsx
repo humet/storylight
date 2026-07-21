@@ -42,6 +42,7 @@ interface EditorState {
   displayName: string;
   apparentAge: string;
   pronouns: string;
+  appearanceNotes: string;
   traits: TraitDraft[];
   strengths: string;
   vulnerabilities: string;
@@ -82,6 +83,7 @@ function emptyState(): EditorState {
     displayName: "",
     apparentAge: "",
     pronouns: "they, them",
+    appearanceNotes: "",
     traits: [],
     strengths: "",
     vulnerabilities: "",
@@ -110,6 +112,7 @@ function fromProfile(profile: CharacterProfile): EditorState {
     displayName: profile.displayName,
     apparentAge: String(profile.apparentAge),
     pronouns: profile.pronouns.join(", "),
+    appearanceNotes: profile.appearanceNotes ?? "",
     traits: ni.personalityTraits.map((trait) => ({
       name: trait.name,
       description: trait.description,
@@ -146,6 +149,7 @@ function buildPayload(state: EditorState): CharacterProfilePayload {
     displayName: state.displayName.trim(),
     apparentAge: Number.parseInt(state.apparentAge, 10),
     pronouns: toPronouns(state.pronouns),
+    appearanceNotes: state.appearanceNotes.trim() || null,
     narrativeIdentity: {
       personalityTraits: state.traits
         .filter((trait) => trait.name.trim() && trait.description.trim())
@@ -304,6 +308,13 @@ export function CharacterEditor({ mode, initial }: CharacterEditorProps) {
             value={state.pronouns}
             onChange={(e) => set("pronouns", e.target.value)}
             hint="Separated by commas, e.g. she, her."
+          />
+          <TextArea
+            label="What do they look like?"
+            value={state.appearanceNotes}
+            onChange={(e) => set("appearanceNotes", e.target.value)}
+            hint="A few details for the illustrator — hair, glasses, a favourite outfit. You'll choose and approve their look before any story is made."
+            placeholder="Curly red hair, round glasses, always in a yellow raincoat"
           />
         </section>
       ) : null}
@@ -497,6 +508,12 @@ export function CharacterEditor({ mode, initial }: CharacterEditorProps) {
               <dt className="font-sans text-sm text-ink-muted">Seems about</dt>
               <dd className="font-sans text-base text-ink">
                 {state.apparentAge || "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="font-sans text-sm text-ink-muted">Look</dt>
+              <dd className="font-sans text-base text-ink">
+                {state.appearanceNotes.trim() || "—"}
               </dd>
             </div>
             <div className="flex justify-between gap-4">

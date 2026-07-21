@@ -18,6 +18,8 @@ export interface CharacterVisualDescriptor {
   pronouns: string[];
   /** Gentle visual motifs (from interests) — hints, never a full prompt. */
   motifs: string[];
+  /** Parent-authored physical description; `null` when none. Never system-invented. */
+  appearanceNotes: string | null;
 }
 
 const MAX_MOTIFS = 4;
@@ -34,5 +36,7 @@ export function buildCharacterVisualDescriptor(
     // Interests make calm visual motifs; cap them so a reference stays uncluttered
     // ("rich but uncluttered backgrounds", `docs/03-ai/image-generation.md`).
     motifs: profile.narrativeIdentity.interests.slice(0, MAX_MOTIFS),
+    // Parent's own words, copied verbatim — the descriptor never invents them.
+    appearanceNotes: profile.appearanceNotes,
   };
 }

@@ -30,6 +30,8 @@ Each character profile should include:
 
 Generate additional views from the approved candidate rather than independently from the original description.
 
+A parent may supply optional free-text **appearance notes** (hair, glasses, a favourite outfit) on the character profile. These seed the **anchor candidate render only** — the everyday full-body view the rest of a set is built from — so a set can resemble the child from the first paint instead of pure reroll-and-curate. They never override identity: identity remains the versioned approved asset set, non-anchor views stay conditioned on the anchor image, and appearance notes are never wired into chapter-illustration prompts (the approved reference and per-scene wardrobe states govern there).
+
 ## Art Bible
 
 The first MVP supports one approved style.
@@ -129,7 +131,7 @@ Important faces and objects must remain clear at phone size.
 
 ## Privacy
 
-The MVP does not require photographs and does not create biometric face embeddings.
+The MVP does not require photographs and does not create biometric face embeddings. A character's physical description is parent-authored, never system-inferred: appearance notes are only ever the parent's own words, and nothing derives a physical description from other data.
 
 ## Acceptance criteria
 

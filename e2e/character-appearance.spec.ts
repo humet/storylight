@@ -25,6 +25,9 @@ test("a parent paints and approves a character reference set", async ({
   await page.getByRole("link", { name: /add a character/i }).click();
   await page.getByRole("textbox", { name: "Name" }).fill("Rosa");
   await page.getByRole("spinbutton", { name: /how old/i }).fill("7");
+  await page
+    .getByRole("textbox", { name: /what do they look like/i })
+    .fill("Curly red hair, round glasses");
   for (let i = 0; i < 4; i++) {
     await page.getByRole("button", { name: "Next", exact: true }).click();
   }

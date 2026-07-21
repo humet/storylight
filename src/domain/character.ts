@@ -79,6 +79,12 @@ export interface CharacterProfile {
   displayName: string;
   apparentAge: number;
   pronouns: string[];
+  /**
+   * Parent-authored physical description (visual, not narrative, identity).
+   * Seeds the anchor character-reference render only; never system-invented and
+   * never wired into chapter-illustration prompts. `null` when the parent gave none.
+   */
+  appearanceNotes: string | null;
   status: CharacterStatus;
 
   narrativeIdentity: NarrativeIdentity;
@@ -119,6 +125,12 @@ export interface CharacterProfilePayload {
   displayName: string;
   apparentAge: number;
   pronouns: string[];
+  /**
+   * Parent-authored physical description (visual, not narrative, identity).
+   * Seeds the anchor character-reference render only; never system-invented.
+   * `null` when the parent gave none.
+   */
+  appearanceNotes: string | null;
   narrativeIdentity: NarrativeIdentity;
   fictionalisationPolicy: FictionalisationPolicy;
   visualProfileId: string | null;

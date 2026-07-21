@@ -1,0 +1,11 @@
+--> Appearance notes: parent-authored physical description feeding the anchor
+--> character-reference render (docs/03-ai/image-generation.md "Character identity").
+--> Additive + NULLABLE: add the column only. NULL = "no notes", which is exactly
+--> the correct value for every pre-existing immutable version row — there is no
+--> backfill and nothing to guess. varchar(500) mirrors the domain cap (a native
+--> DB length constraint, like display_name varchar(120)). Rule-8 safe: existing
+--> immutable version rows are untouched, so approved visual profiles and pinned
+--> series are byte-for-byte unaffected; editing notes mints a NEW version through
+--> the standard addVersion path. On an empty database (db:validate) this is a
+--> trivial single ADD COLUMN.
+ALTER TABLE "character_profile_versions" ADD COLUMN "appearance_notes" varchar(500);

@@ -206,6 +206,7 @@ const CHARACTER_PAYLOAD: CharacterProfilePayload = {
   displayName: "Rosa",
   apparentAge: 6,
   pronouns: ["she", "her"],
+  appearanceNotes: null,
   narrativeIdentity: {
     personalityTraits: [],
     strengths: ["gentle", "curious"],

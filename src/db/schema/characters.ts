@@ -32,8 +32,8 @@ import { visualProfiles } from "./visual-assets";
  *  - `character_relationships`  — first-class bonds between two characters.
  *
  * Versioning follows the doc: PERMANENT changes (core traits, speech guidance,
- * fictionalisation boundaries, apparent age, display name, pronouns) create a
- * new version; lifecycle changes (approve/retire) do not. Frequently-queried
+ * fictionalisation boundaries, apparent age, display name, pronouns, appearance
+ * notes) create a new version; lifecycle changes (approve/retire) do not. Frequently-queried
  * fields (`status`, `current_version`, `display_name`) are typed columns on the
  * character row for cheap list queries; the rich payloads
  * (`narrative_identity`, `fictionalisation_policy`) are validated JSONB on the
@@ -113,6 +113,9 @@ export const characterProfileVersions = pgTable(
     displayName: varchar("display_name", { length: 120 }).notNull(),
     apparentAge: integer("apparent_age").notNull(),
     pronouns: jsonb("pronouns").$type<string[]>().notNull(),
+    // Parent-authored physical description (nullable; NULL = no notes). Native
+    // length constraint mirrors the domain cap; feeds the anchor reference only.
+    appearanceNotes: varchar("appearance_notes", { length: 500 }),
     narrativeIdentity: jsonb("narrative_identity")
       .$type<NarrativeIdentity>()
       .notNull(),

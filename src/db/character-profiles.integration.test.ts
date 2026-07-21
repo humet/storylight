@@ -56,6 +56,7 @@ function payload(
     displayName: "Rosa",
     apparentAge: 7,
     pronouns: ["she", "her"],
+    appearanceNotes: null,
     narrativeIdentity: {
       personalityTraits: [
         {
@@ -202,6 +203,58 @@ describe("versioning (permanent changes)", () => {
       .from(characterProfileVersions)
       .where(eq(characterProfileVersions.characterId, created.id));
     expect(versionRows).toHaveLength(1);
+  });
+});
+
+describe("appearance notes (parent-authored physical description)", () => {
+  it("stores trimmed notes and reads them back on the profile", async () => {
+    const userId = await seedUser("owner-notes");
+    const familyId = await seedFamily(userId, "Notes");
+    const actor = ownerActor(userId, familyId);
+
+    const created = await commands.createCharacterProfile(
+      actor,
+      payload({ appearanceNotes: "  Curly red hair, round glasses  " }),
+    );
+    const read = await queries.getCharacterProfile(actor, created.id);
+    expect(read?.appearanceNotes).toBe("Curly red hair, round glasses");
+  });
+
+  it("mints a new version whose notes change while the v1 row keeps the old value", async () => {
+    const userId = await seedUser("owner-notes-v2");
+    const familyId = await seedFamily(userId, "NotesVersions");
+    const actor = ownerActor(userId, familyId);
+
+    const created = await commands.createCharacterProfile(
+      actor,
+      payload({ appearanceNotes: "Curly red hair" }),
+    );
+    const updated = await commands.updateCharacterProfile(actor, {
+      characterId: created.id,
+      payload: payload({
+        appearanceNotes: "Short brown hair, a yellow raincoat",
+      }),
+    });
+    expect(updated.version).toBe(2);
+    expect(updated.appearanceNotes).toBe("Short brown hair, a yellow raincoat");
+
+    // The immutable v1 row still holds the original notes.
+    const rows = await db
+      .select()
+      .from(characterProfileVersions)
+      .where(eq(characterProfileVersions.characterId, created.id));
+    const v1 = rows.find((r) => r.version === 1);
+    expect(v1?.appearanceNotes).toBe("Curly red hair");
+  });
+
+  it("defaults to null when the parent gives no notes", async () => {
+    const userId = await seedUser("owner-no-notes");
+    const familyId = await seedFamily(userId, "NoNotes");
+    const actor = ownerActor(userId, familyId);
+
+    const created = await commands.createCharacterProfile(actor, payload());
+    const read = await queries.getCharacterProfile(actor, created.id);
+    expect(read?.appearanceNotes).toBeNull();
   });
 });
 

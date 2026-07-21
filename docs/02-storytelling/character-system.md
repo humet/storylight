@@ -219,6 +219,7 @@ Require parent approval for permanent changes to:
 - long-term memories
 - apparent age
 - family relationships
+- appearance notes (visual identity; only ever the parent's own words — see the image-generation document)
 
 Ordinary chapter state changes do not require approval.
 

@@ -59,6 +59,15 @@ export const CharacterProfilePayloadSchema = z.object({
   displayName: z.string().trim().min(1).max(120),
   apparentAge: z.number().int().min(0).max(120),
   pronouns: z.array(z.string().trim().min(1).max(40)).min(1).max(6),
+  // Parent-authored appearance notes: trimmed, capped to the DB varchar length,
+  // empty/whitespace → null; missing keeps older payload shapes valid.
+  appearanceNotes: z
+    .string()
+    .trim()
+    .max(500)
+    .nullable()
+    .default(null)
+    .transform((v) => (v ? v : null)),
   narrativeIdentity: NarrativeIdentitySchema,
   fictionalisationPolicy: FictionalisationPolicySchema,
   // Visual profile arrives in M4; always null at creation/edit time in M3.

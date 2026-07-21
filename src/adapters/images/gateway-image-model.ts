@@ -83,7 +83,7 @@ function isAvailabilityError(error: unknown): boolean {
   );
 }
 
-function buildInstruction(spec: ImageGenerationSpec): string {
+export function buildInstruction(spec: ImageGenerationSpec): string {
   const artBible = artBibleForVersion(spec.artBibleVersion);
   const { descriptor } = spec;
 
@@ -108,6 +108,11 @@ function buildInstruction(spec: ImageGenerationSpec): string {
     "",
     `CHARACTER: "${descriptor.displayName}", apparent age ${descriptor.apparentAge}, pronouns ${descriptor.pronouns.join("/")}.`,
   ];
+  if (descriptor.appearanceNotes) {
+    lines.push(
+      `APPEARANCE (parent's description — follow it faithfully): ${descriptor.appearanceNotes}.`,
+    );
+  }
   if (descriptor.motifs.length > 0) {
     lines.push(
       `Gentle visual motifs (subtle, uncluttered): ${descriptor.motifs.join(", ")}.`,

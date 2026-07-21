@@ -420,6 +420,7 @@ function characterPayload(): CharacterProfilePayload {
     displayName: "placeholder",
     apparentAge: 7,
     pronouns: ["they", "them"],
+    appearanceNotes: null,
     narrativeIdentity: {
       personalityTraits: [],
       strengths: ["gentle", "curious"],

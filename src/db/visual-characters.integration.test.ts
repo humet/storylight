@@ -74,6 +74,7 @@ function payload(displayName: string): CharacterProfilePayload {
     displayName,
     apparentAge: 7,
     pronouns: ["they", "them"],
+    appearanceNotes: null,
     narrativeIdentity: {
       personalityTraits: [],
       strengths: [],
@@ -169,14 +170,26 @@ describe("requesting candidates", () => {
     const user = await seedUser("owner-coherent");
     const familyId = await seedFamily(user, "Coherent");
     const actor = ownerActor(user, familyId);
-    const character = await newCharacter(actor, "Rosa");
+    const character = await commands.createCharacterProfile(actor, {
+      ...payload("Rosa"),
+      appearanceNotes: "Curly red hair, round glasses",
+    });
 
-    // Spy model records call order + anchor conditioning, bytes from the fake.
+    // Spy model records call order + anchor conditioning + the descriptor's
+    // appearance notes, bytes from the fake.
     const fake = createFakeImageModel();
-    const calls: Array<{ view: ReferenceView; hasAnchor: boolean }> = [];
+    const calls: Array<{
+      view: ReferenceView;
+      hasAnchor: boolean;
+      appearanceNotes: string | null;
+    }> = [];
     const spy: ImageModel = {
       async generate(spec: ImageGenerationSpec): Promise<GeneratedImage> {
-        calls.push({ view: spec.view, hasAnchor: Boolean(spec.anchorImage) });
+        calls.push({
+          view: spec.view,
+          hasAnchor: Boolean(spec.anchorImage),
+          appearanceNotes: spec.descriptor.appearanceNotes,
+        });
         return fake.generate(spec);
       },
     };
@@ -205,6 +218,13 @@ describe("requesting candidates", () => {
     expect(calls.slice(1).every((c) => c.view !== ANCHOR_REFERENCE_VIEW)).toBe(
       true,
     );
+
+    // Parent-authored appearance notes reach the ImageGenerationSpec descriptor
+    // for every view (the adapter only renders them on the anchor, no-anchorImage
+    // call — proven in the adapter's unit tests).
+    expect(
+      calls.every((c) => c.appearanceNotes === "Curly red hair, round glasses"),
+    ).toBe(true);
   });
 
   it("refuses to paint a retired character", async () => {
