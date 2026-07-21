@@ -101,7 +101,8 @@ describe("cost report", () => {
         run(3, "accepted", 10),
       ]);
 
-    // Image: an initial (350) that was repaired (350) then escalated (900).
+    // Image (route v2): a Seedream initial (120) repaired (120) then escalated
+    // on the premium Gemini tier (900).
     const imageRun = (phase: string, cost: number) => ({
       familyId,
       storyId: story.id,
@@ -121,8 +122,8 @@ describe("cost report", () => {
     await db
       .insert(imageGenerationRuns)
       .values([
-        imageRun("initial", 350),
-        imageRun("repair", 350),
+        imageRun("initial", 120),
+        imageRun("repair", 120),
         imageRun("escalation", 900),
       ]);
 
@@ -135,16 +136,16 @@ describe("cost report", () => {
     expect(report.textByOutcome.rejected).toBe(150);
     expect(report.textAttempts).toBe(4);
 
-    // Image = 350 + 350 + 900 = 1600.
-    expect(report.imageCostMinorUnits).toBe(1600);
+    // Image = 120 + 120 + 900 = 1140.
+    expect(report.imageCostMinorUnits).toBe(1140);
     expect(report.imageByPhase.escalation).toBe(900);
 
     // Total accepted-result cost includes ALL of it.
-    expect(report.totalMinorUnits).toBe(1760);
+    expect(report.totalMinorUnits).toBe(1300);
 
     // The retry portion is the majority — a naive "accepted only" view (10) would
-    // hide 150 of text + 1250 of image repair/escalation.
-    expect(report.retryCostMinorUnits).toBe(150 + 350 + 900);
+    // hide 150 of text + 1020 of image repair/escalation.
+    expect(report.retryCostMinorUnits).toBe(150 + 120 + 900);
     expect(report.retryCostMinorUnits).toBeGreaterThan(
       report.textByOutcome.accepted,
     );

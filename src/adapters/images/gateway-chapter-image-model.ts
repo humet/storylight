@@ -1,6 +1,7 @@
 import {
   APICallError,
   createGateway,
+  generateImage,
   generateText,
   type ModelMessage,
 } from "ai";
@@ -26,11 +27,23 @@ import { generationFailedError, isDomainError } from "@/lib/errors";
  * the Vercel AI SDK (`ai`) — the ESLint boundary fences it to `src/adapters/**`
  * (rule 12).
  *
- * The Gemini image models are reached through the AI Gateway via the LANGUAGE API
- * (`generateText` + `gateway.languageModel(slug)`), NOT `generateImage`: the
- * gateway classifies them as language models and rejects `generateImage`. The
- * generated raster is read from `result.files` (each file exposes `.uint8Array` +
- * `.mediaType`).
+ * TWO GATEWAY API PATHS behind ONE port, branched by the route target's provider
+ * (pure {@link imageApiForTarget}):
+ *  - GEMINI image models (`google/…`) are reached through the LANGUAGE API
+ *    (`generateText` + `gateway.languageModel(slug)`), NOT `generateImage`: the
+ *    gateway classifies them as language models and rejects `generateImage`. The
+ *    raster is read from `result.files` (each file exposes `.uint8Array` +
+ *    `.mediaType`).
+ *  - SEEDREAM (`bytedance/…`, the routine + repair tiers as of image-route v2) is
+ *    the OPPOSITE — it must go through the dedicated IMAGE API (`generateImage`
+ *    with `prompt: { images, text }`, references in `images`) and rejects the
+ *    language API. Every bytedance call sets `providerOptions.bytedance.watermark
+ *    = false` ({@link bytedanceProviderOptions}) — a watermarked image is a product
+ *    defect for a premium publishing surface. Confirmed removable on the
+ *    reference-conditioned path (BUILD_STATE 2026-07-21).
+ *
+ * The SAME deterministic {@link buildInstruction} text reaches BOTH paths; only the
+ * transport (message content parts vs. `prompt.images` + `text`) differs.
  *
  * REFERENCE-DRIVEN IDENTITY (ADR-003, rule 7): the workflow resolves each
  * approved reference to its bytes and hands them in as `referenceImages`; this
@@ -74,8 +87,65 @@ const ASPECT_GUIDANCE: Record<ImageSceneRequest["aspect"], string> = {
   square: "1:1 square",
 };
 
+/** The gateway aspect-ratio string per scene aspect (dedicated IMAGE API only). */
+const ASPECT_RATIO: Record<ImageSceneRequest["aspect"], `${number}:${number}`> =
+  {
+    landscape: "4:3",
+    portrait: "3:4",
+    square: "1:1",
+  };
+
+/**
+ * Gateway providers whose models are served ONLY by the dedicated IMAGE API
+ * (`generateImage`) and rejected on the language API — the inverse of the Gemini
+ * image models. Currently just bytedance (Seedream). Pure so branch SELECTION is
+ * unit-tested without a paid call.
+ */
+const IMAGE_API_PROVIDERS: readonly string[] = ["bytedance"];
+
+/** Which gateway API a route target must use. Pure. */
+export function imageApiForTarget(target: string): "image" | "language" {
+  const provider = target.split("/")[0]?.toLowerCase() ?? "";
+  return IMAGE_API_PROVIDERS.includes(provider) ? "image" : "language";
+}
+
+/** Scene aspect → gateway `aspectRatio` string (dedicated IMAGE API). Pure. */
+export function aspectRatioFor(
+  aspect: ImageSceneRequest["aspect"],
+): `${number}:${number}` {
+  return ASPECT_RATIO[aspect];
+}
+
+/**
+ * Provider options applied to EVERY bytedance/Seedream call. `watermark: false`
+ * is non-negotiable — a visible "AI generated" stamp is a product defect on a
+ * premium children's-book page (rule: premium publishing experience). Pure so a
+ * test can assert it is always set.
+ */
+export function bytedanceProviderOptions() {
+  return { bytedance: { watermark: false } } as const;
+}
+
+/**
+ * The dedicated IMAGE-API prompt: the SAME deterministic instruction text as the
+ * language path ({@link buildInstruction}) plus the reference bytes as the `images`
+ * array (Seedream conditions identity on them). When there are NO references it
+ * degrades to a plain text-to-image string prompt (a valid {@link GenerateImagePrompt}).
+ * Pure — the message/prompt assembly is unit-tested. Bytes are handed straight
+ * through; they never enter canonical state or a workflow payload.
+ */
+export function buildSeedreamPrompt(
+  request: ImageSceneRequest,
+  referenceImages: ReferenceImage[],
+): { images: Uint8Array[]; text: string } | string {
+  const text = buildInstruction(request);
+  return referenceImages.length > 0
+    ? { images: referenceImages.map((ref) => ref.bytes), text }
+    : text;
+}
+
 /** Build the concrete provider instruction from the model-neutral request. */
-function buildInstruction(request: ImageSceneRequest): string {
+export function buildInstruction(request: ImageSceneRequest): string {
   const lines: string[] = [
     "Paint a single premium children's-book illustration of the scene below.",
     "",
@@ -173,6 +243,80 @@ export function createGatewayChapterImageModel(): ChapterImageModel {
     process.env.AI_GATEWAY_API_KEY ?? process.env.VERCEL_OIDC_TOKEN;
   const gateway = createGateway(apiKey ? { apiKey } : {});
 
+  // GEMINI image models: the LANGUAGE API, raster read from `result.files`.
+  async function generateViaLanguageApi(
+    request: ImageSceneRequest,
+    route: ImageRouteResolution,
+    referenceImages: ReferenceImage[],
+  ): Promise<GeneratedSceneImage> {
+    const result = await generateText({
+      model: gateway.languageModel(route.target),
+      messages: buildMessages(request, referenceImages),
+    });
+
+    const image = result.files.find((file) =>
+      file.mediaType?.startsWith("image/"),
+    );
+    if (!image) {
+      // The model returned no raster — a generation failure, not an
+      // availability failure. The workflow records it and stops the ladder.
+      throw generationFailedError({
+        safeMessage: "This picture could not be painted. Please try again.",
+        internalDetail: `Gateway image model "${route.target}" returned no image file (finishReason=${result.finishReason}).`,
+        retryable: false,
+        stage: "adapter.gateway-chapter-image-model",
+      });
+    }
+
+    return {
+      bytes: image.uint8Array,
+      contentType: image.mediaType,
+      // ADR-007: no decode. Report the requested dimensions for lineage +
+      // the coarse aspect gate.
+      width: request.dimensions.width,
+      height: request.dimensions.height,
+      model: result.response.modelId ?? route.target,
+      seed: request.seed,
+    };
+  }
+
+  // SEEDREAM (bytedance): the dedicated IMAGE API. references go in `prompt.images`,
+  // watermark stripped on every call.
+  async function generateViaImageApi(
+    request: ImageSceneRequest,
+    route: ImageRouteResolution,
+    referenceImages: ReferenceImage[],
+  ): Promise<GeneratedSceneImage> {
+    const result = await generateImage({
+      model: gateway.imageModel(route.target),
+      prompt: buildSeedreamPrompt(request, referenceImages),
+      aspectRatio: aspectRatioFor(request.aspect),
+      seed: request.seed,
+      // watermark:false — a watermarked image is a product defect (rule).
+      providerOptions: bytedanceProviderOptions(),
+    });
+
+    const image = result.image;
+    if (!image || !image.mediaType?.startsWith("image/")) {
+      throw generationFailedError({
+        safeMessage: "This picture could not be painted. Please try again.",
+        internalDetail: `Gateway image model "${route.target}" returned no image via generateImage.`,
+        retryable: false,
+        stage: "adapter.gateway-chapter-image-model",
+      });
+    }
+
+    return {
+      bytes: image.uint8Array,
+      contentType: image.mediaType,
+      // ADR-007: no decode. Report the requested dimensions for lineage.
+      width: request.dimensions.width,
+      height: request.dimensions.height,
+      model: result.responses[0]?.modelId ?? route.target,
+      seed: request.seed,
+    };
+  }
+
   return {
     async generate(
       request: ImageSceneRequest,
@@ -180,35 +324,11 @@ export function createGatewayChapterImageModel(): ChapterImageModel {
       referenceImages: ReferenceImage[],
     ): Promise<GeneratedSceneImage> {
       try {
-        const result = await generateText({
-          model: gateway.languageModel(route.target),
-          messages: buildMessages(request, referenceImages),
-        });
-
-        const image = result.files.find((file) =>
-          file.mediaType?.startsWith("image/"),
-        );
-        if (!image) {
-          // The model returned no raster — a generation failure, not an
-          // availability failure. The workflow records it and stops the ladder.
-          throw generationFailedError({
-            safeMessage: "This picture could not be painted. Please try again.",
-            internalDetail: `Gateway image model "${route.target}" returned no image file (finishReason=${result.finishReason}).`,
-            retryable: false,
-            stage: "adapter.gateway-chapter-image-model",
-          });
-        }
-
-        return {
-          bytes: image.uint8Array,
-          contentType: image.mediaType,
-          // ADR-007: no decode. Report the requested dimensions for lineage +
-          // the coarse aspect gate.
-          width: request.dimensions.width,
-          height: request.dimensions.height,
-          model: result.response.modelId ?? route.target,
-          seed: request.seed,
-        };
+        // Branch by the route target's provider — the two APIs are mutually
+        // exclusive per model family (see the module doc).
+        return imageApiForTarget(route.target) === "image"
+          ? await generateViaImageApi(request, route, referenceImages)
+          : await generateViaLanguageApi(request, route, referenceImages);
       } catch (error) {
         // A no-image generation failure we already classified — re-throw as-is.
         if (isDomainError(error)) throw error;

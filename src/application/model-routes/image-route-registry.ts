@@ -14,7 +14,15 @@ import { invalidCommandError } from "@/lib/errors";
  * intentionally lighter (recorded in BUILD_STATE).
  */
 
-export const IMAGE_ROUTE_VERSION = "mvp-image-routes-v1";
+// v2 (2026-07-21, ADR-008 follow-up): the ROUTINE tiers move from
+// `google/gemini-3.1-flash-image` to `bytedance/seedream-5.0-pro` — validated
+// 2026-07-20/21 (BUILD_STATE) at identity/outfit/style parity on the hard-scene
+// set and the coherent-anchor path, at ~⅓ cost, watermark removed via the adapter's
+// bytedance `watermark:false` provider option. Premium escalation + the M4
+// reference tiers stay on `google/gemini-3-pro-image`; the vision review stays on
+// `google/gemini-2.5-flash`. Bumping the version records the swap on every new
+// publication's `image_route_version` provenance (rule 8 — see BUILD_STATE).
+export const IMAGE_ROUTE_VERSION = "mvp-image-routes-v2";
 
 interface ImageRouteSeed {
   target: string;
@@ -46,20 +54,25 @@ const ROUTES: Record<ImageCapability, ImageRouteSeed> = {
     target: "google/gemini-3-pro-image",
     costMinorUnitsPerImage: 400,
   },
-  // Routine 2K chapter illustration (cost-management.md: prefer routine over premium).
+  // Routine 2K chapter illustration (cost-management.md: prefer routine over
+  // premium). Seedream 5.0 Pro reached the gateway via the dedicated IMAGE API
+  // (see `gateway-chapter-image-model.ts`), watermark stripped per call.
+  // COST: gemini-3.1-flash-image was 350 minor units at its ~$0.101/image @2K;
+  // Seedream is a flat $0.035/image → 350 × (0.035 / 0.101) ≈ 121 → 120 (kept
+  // proportional to the existing rows so the cost report stays comparable).
   "routine-chapter-illustration": {
-    target: "google/gemini-3.1-flash-image",
-    costMinorUnitsPerImage: 350,
+    target: "bytedance/seedream-5.0-pro",
+    costMinorUnitsPerImage: 120,
   },
-  // Premium escalation tier.
+  // Premium escalation tier — stays on Gemini 3 Pro (unchanged).
   "premium-chapter-illustration": {
     target: "google/gemini-3-pro-image",
     costMinorUnitsPerImage: 900,
   },
-  // Targeted repair (kept on the routine tier).
+  // Targeted repair (kept on the routine tier → also Seedream, same $0.035 → 120).
   "illustration-repair": {
-    target: "google/gemini-3.1-flash-image",
-    costMinorUnitsPerImage: 350,
+    target: "bytedance/seedream-5.0-pro",
+    costMinorUnitsPerImage: 120,
   },
 };
 

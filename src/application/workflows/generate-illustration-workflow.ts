@@ -97,8 +97,9 @@ const IMAGE_JOB_BUDGET: WorkflowBudget = {
   maximumTextCalls: 0,
   maximumImageCalls: IMAGE_PHASES.length,
   maximumOutputTokens: 0,
-  // Premium escalation (900) + a repair (350) + an initial (350) ≈ 1600; leave
-  // headroom so the ceiling bounds a runaway, not the sanctioned ladder.
+  // Image-route v2: premium escalation (900, Gemini 3 Pro) + a Seedream repair
+  // (120) + a Seedream initial (120) ≈ 1140 (was ≈1600 on all-Gemini); the 3_000
+  // ceiling still bounds a runaway with ample headroom, not the sanctioned ladder.
   maximumEstimatedCostMinorUnits: 3_000,
 };
 
