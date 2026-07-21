@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AuthenticatedActor } from "@/domain/actor";
 import type { WorkflowExecution } from "@/domain/workflow";
 import {
+  ANCHOR_REFERENCE_VIEW,
   REFERENCE_VIEW_LABELS,
   REFERENCE_VIEWS,
 } from "@/domain/reference-view";
@@ -26,6 +27,17 @@ import type { VisualCharacterService } from "../visual-character-service";
  * ADR-003). ONE ENGINE STAGE = ONE REAL IMAGE CALL: the six canonical reference
  * views each get their own short, idempotent stage, then a final assembly stage
  * records the candidate set from the six persisted assets.
+ *
+ * COHERENT SET (ADR-003 "generate additional views from the approved candidate
+ * rather than independently"): the ANCHOR view (`ANCHOR_REFERENCE_VIEW`, the
+ * everyday full-body outfit) is painted FIRST and establishes the canonical face,
+ * hair and complete outfit. Every OTHER view stage reads the anchor's storage key
+ * from the anchor stage's output and passes it to the service, which conditions
+ * that view on the anchor's bytes — so all six views are the SAME child in the
+ * SAME outfit rather than six independent, self-contradicting guesses. Ordering
+ * (anchor stage first) is the only structural change; the one-image-per-stage WDK
+ * shape, deterministic per-view ids, idempotency, and the image-call cap are
+ * unchanged.
  *
  * WHY: a stage that made all six image calls in one serverless invocation exceeded
  * the function max-duration, so Vercel Workflow (WDK) replayed the WHOLE stage —
@@ -99,10 +111,21 @@ function paintViewStageKey(view: (typeof REFERENCE_VIEWS)[number]): string {
   return `paint-${view}`;
 }
 
+/**
+ * Paint order: the ANCHOR view FIRST, then the remaining views in canonical
+ * order. The anchor must exist before any view that conditions on it. (The
+ * recorded set is still assembled in `REFERENCE_VIEWS` order — front portrait
+ * first — by the record stage; this only governs generation order.)
+ */
+const ORDERED_PAINT_VIEWS = [
+  ANCHOR_REFERENCE_VIEW,
+  ...REFERENCE_VIEWS.filter((view) => view !== ANCHOR_REFERENCE_VIEW),
+];
+
 export function createGenerateCharacterCandidatesWorkflow(
   deps: GenerateCandidatesWorkflowDeps,
 ): WorkflowDefinition<GenerateCandidatesInput> {
-  const paintStages: WorkflowStage[] = REFERENCE_VIEWS.map((view) => ({
+  const paintStages: WorkflowStage[] = ORDERED_PAINT_VIEWS.map((view) => ({
     key: paintViewStageKey(view),
     // Parent-friendly loading copy (`docs/company/writing-style.md`).
     label: `Painting the ${REFERENCE_VIEW_LABELS[view].toLowerCase()}`,
@@ -131,6 +154,24 @@ export function createGenerateCharacterCandidatesWorkflow(
         });
       }
 
+      // COHERENT SET: every NON-anchor view conditions on the anchor the first
+      // stage already painted. The anchor's storage key lives in its stage output
+      // (IDs/metadata only — never bytes); the service reads the bytes itself.
+      let anchorStorageKey: string | undefined;
+      if (view !== ANCHOR_REFERENCE_VIEW) {
+        const anchor = (await ctx.getStageOutput(
+          paintViewStageKey(ANCHOR_REFERENCE_VIEW),
+        )) as NewVisualAsset | undefined;
+        if (!anchor) {
+          throw generationFailedError({
+            retryable: false,
+            internalDetail: `Anchor view "${ANCHOR_REFERENCE_VIEW}" was not painted before "${view}" for workflow ${execution.id}.`,
+            stage: "visual.paint",
+          });
+        }
+        anchorStorageKey = anchor.storageKey;
+      }
+
       const asset = await deps.visualCharacterService.generateCandidateView(
         actorFrom(execution),
         {
@@ -140,6 +181,7 @@ export function createGenerateCharacterCandidatesWorkflow(
           // Stable per workflow run: makes the paid side effect idempotent across a
           // crash/replay (same candidate-set + asset ids, keys, and bytes).
           idempotencyKey: execution.id,
+          anchorStorageKey,
         },
       );
       return { output: asset as unknown as Record<string, unknown> };

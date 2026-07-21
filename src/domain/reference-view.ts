@@ -23,6 +23,24 @@ export const REFERENCE_VIEWS = [
 
 export type ReferenceView = (typeof REFERENCE_VIEWS)[number];
 
+/**
+ * The ANCHOR view that establishes a character's canonical look for a COHERENT
+ * reference set (ADR-003: "generate additional views from the approved candidate
+ * rather than independently"). It is painted FIRST, then every other view is
+ * generated CONDITIONED ON IT, so the whole set is the same child with the same
+ * face, the same hair, and the same everyday outfit.
+ *
+ * It must be `default-outfit`, NOT the head-and-shoulders `front-portrait`: only
+ * a full-body view wearing the everyday outfit can pin the COMPLETE outfit (top,
+ * bottom, footwear) that the other views must inherit. `front-portrait` cannot
+ * establish the lower outfit, so it can never be the anchor — it is instead
+ * re-framed FROM the anchor like every other clothed view. The anchor image is
+ * the outfit source of truth (there is deliberately no outfit field on the
+ * descriptor; carrying a canonical outfit string is a possible future
+ * enhancement).
+ */
+export const ANCHOR_REFERENCE_VIEW: ReferenceView = "default-outfit";
+
 /** Warm, parent-facing labels for each view (`docs/company/writing-style.md`). */
 export const REFERENCE_VIEW_LABELS: Record<ReferenceView, string> = {
   "front-portrait": "Front portrait",

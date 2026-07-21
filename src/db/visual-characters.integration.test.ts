@@ -7,9 +7,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFilesystemObjectStorage } from "@/adapters/storage/filesystem-object-storage";
 import { createFakeImageModel } from "@/adapters/images/fake-image-model";
 import { createCharacterCommands } from "@/application/character-commands";
+import type {
+  GeneratedImage,
+  ImageGenerationSpec,
+  ImageModel,
+} from "@/application/ports/image-model";
 import { createVisualCharacterService } from "@/application/visual-character-service";
 import type { AuthenticatedActor } from "@/domain/actor";
 import type { CharacterProfilePayload } from "@/domain/character";
+import {
+  ANCHOR_REFERENCE_VIEW,
+  REFERENCE_VIEWS,
+  type ReferenceView,
+} from "@/domain/reference-view";
 import { isDomainError } from "@/lib/errors";
 import type { Database } from "./client";
 import { createCharacterRepository } from "./repositories/character-repository";
@@ -153,6 +163,48 @@ describe("requesting candidates", () => {
     expect(delivered).not.toBeNull();
     expect(delivered!.contentType).toBe("image/svg+xml");
     expect(delivered!.bytes.byteLength).toBeGreaterThan(0);
+  });
+
+  it("paints the anchor view first and conditions the other views on it (coherent set)", async () => {
+    const user = await seedUser("owner-coherent");
+    const familyId = await seedFamily(user, "Coherent");
+    const actor = ownerActor(user, familyId);
+    const character = await newCharacter(actor, "Rosa");
+
+    // Spy model records call order + anchor conditioning, bytes from the fake.
+    const fake = createFakeImageModel();
+    const calls: Array<{ view: ReferenceView; hasAnchor: boolean }> = [];
+    const spy: ImageModel = {
+      async generate(spec: ImageGenerationSpec): Promise<GeneratedImage> {
+        calls.push({ view: spec.view, hasAnchor: Boolean(spec.anchorImage) });
+        return fake.generate(spec);
+      },
+    };
+    const spied = createVisualCharacterService({
+      familyRepository: familyRepo,
+      characterRepository: characterRepo,
+      visualAssetRepository: visualRepo,
+      objectStorage: createFilesystemObjectStorage(storageRoot),
+      imageModel: spy,
+    });
+
+    const sets = await spied.requestCandidateSets(actor, {
+      characterId: character.id,
+      setCount: 1,
+    });
+
+    // Recorded in canonical order (front portrait first) regardless of paint order.
+    expect(sets[0].assets[0].view).toBe("front-portrait");
+    expect(sets[0].assets).toHaveLength(REFERENCE_VIEWS.length);
+
+    // Generation order: anchor first (unconditioned), then the rest conditioned.
+    expect(calls).toHaveLength(REFERENCE_VIEWS.length);
+    expect(calls[0].view).toBe(ANCHOR_REFERENCE_VIEW);
+    expect(calls[0].hasAnchor).toBe(false);
+    expect(calls.slice(1).every((c) => c.hasAnchor)).toBe(true);
+    expect(calls.slice(1).every((c) => c.view !== ANCHOR_REFERENCE_VIEW)).toBe(
+      true,
+    );
   });
 
   it("refuses to paint a retired character", async () => {

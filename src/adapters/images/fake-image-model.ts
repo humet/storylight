@@ -17,7 +17,10 @@ import {
  *
  * Determinism: identical spec → identical bytes. Colours and label come purely
  * from the descriptor + view + seed, so tests can assert stable checksums and a
- * parent re-requesting produces reproducible previews.
+ * parent re-requesting produces reproducible previews. `spec.anchorImage` (the
+ * real adapter's coherent-set conditioning input) is deliberately IGNORED here so
+ * the fake stays byte-stable and every existing checksum/pipeline test still
+ * passes — coherence is a real-model concern.
  */
 
 const MODEL_ID = "fake-placeholder@1";

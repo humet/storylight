@@ -27,15 +27,16 @@ import { generationFailedError, isDomainError } from "@/lib/errors";
  * (`generateText` + `gateway.languageModel(slug)`, reading the raster from
  * `result.files`) — the gateway rejects these models on `generateImage`.
  *
- * CROSS-VIEW CONSISTENCY: the M4 `ImageModel` port is per-view and stateless (the
- * visual-character service loops the six views, calling `generate` once each), so
- * conditioning every non-front view on a freshly generated front portrait would
- * mean re-generating the portrait inside each call — double the paid work. This
- * adapter therefore does the sanctioned minimum: text→image per view, sharing one
- * detailed descriptor + Art Bible directive block + a DETERMINISTIC seed so the
- * views stay stylistically coherent. Generating a whole set in one conditioned
- * pass would require widening the port (a documented follow-up); the parent still
- * approves the resulting set as a whole before it becomes canonical.
+ * COHERENT SET (ADR-003 "generate additional views from the approved candidate
+ * rather than independently"): the service paints the ANCHOR view first
+ * (`ANCHOR_REFERENCE_VIEW` = the everyday full-body outfit) with a plain
+ * text→image render, then generates every OTHER view CONDITIONED ON THAT ANCHOR
+ * IMAGE — the anchor's bytes arrive on `spec.anchorImage`. When present this
+ * adapter attaches the anchor as an image content part and instructs the model to
+ * reproduce the SAME child (identical face, hair, and complete outfit), changing
+ * only the framing. So the whole set is one child in one outfit, not six
+ * independent guesses that contradict each other. When `anchorImage` is absent
+ * (the anchor view itself) it falls back to the descriptor-only text→image render.
  *
  * Credential is passed EXPLICITLY to `createGateway` (ambient OIDC does not fire
  * in the WDK `"use step"` context). ADR-007: no decode/resize in the runtime —
@@ -85,6 +86,23 @@ function isAvailabilityError(error: unknown): boolean {
 function buildInstruction(spec: ImageGenerationSpec): string {
   const artBible = artBibleForVersion(spec.artBibleVersion);
   const { descriptor } = spec;
+
+  // COHERENT SET: when we have the anchor image, the SET's canonical look is
+  // already fixed — do not re-invent it from prose. Reproduce the SAME child and
+  // the SAME complete outfit from the anchor, changing only the framing.
+  if (spec.anchorImage) {
+    return [
+      "The attached reference image shows a character. Paint the SAME character:",
+      "reproduce the IDENTICAL face, hair, skin tone and COMPLETE outfit (every garment, same colours and patterns) — do NOT change the clothing, hairstyle, or palette.",
+      `Change ONLY the framing to: ${VIEW_FRAMING[spec.view]}.`,
+      "For full-body framings, extend the SAME outfit naturally to the whole figure (same top, bottom and footwear).",
+      "",
+      `STYLE: ${[artBible.medium, ...artBible.qualities].join("; ")}.`,
+      `DO NOT: ${artBible.prohibitions.join("; ")}.`,
+      "A single character only, centered, clear at phone size.",
+    ].join("\n");
+  }
+
   const lines: string[] = [
     `Paint a character reference: ${VIEW_FRAMING[spec.view]}.`,
     "",
@@ -99,9 +117,28 @@ function buildInstruction(spec: ImageGenerationSpec): string {
     "",
     `STYLE: ${[artBible.medium, ...artBible.qualities].join("; ")}.`,
     `DO NOT: ${artBible.prohibitions.join("; ")}.`,
-    "Keep the face and hair identical across views so this reference set is internally consistent. A single character only, centered, clear at phone size.",
+    "Establish a clear everyday outfit and keep the face and hair unambiguous — this view is the anchor the rest of the set is built from. A single character only, centered, clear at phone size.",
   );
   return lines.join("\n");
+}
+
+/**
+ * One user message: the instruction, then the anchor image (when conditioning a
+ * non-anchor view). The anchor bytes are the outfit/identity source of truth.
+ */
+function buildMessages(spec: ImageGenerationSpec): ModelMessage[] {
+  const content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; image: Uint8Array; mediaType: string }
+  > = [{ type: "text", text: buildInstruction(spec) }];
+  if (spec.anchorImage) {
+    content.push({
+      type: "image",
+      image: spec.anchorImage.bytes,
+      mediaType: spec.anchorImage.contentType,
+    });
+  }
+  return [{ role: "user", content }];
 }
 
 export function createGatewayImageModel(): ImageModel {
@@ -116,16 +153,10 @@ export function createGatewayImageModel(): ImageModel {
   return {
     async generate(spec: ImageGenerationSpec): Promise<GeneratedImage> {
       const { width, height } = VIEW_SIZE[spec.view];
-      const messages: ModelMessage[] = [
-        {
-          role: "user",
-          content: [{ type: "text", text: buildInstruction(spec) }],
-        },
-      ];
       try {
         const result = await generateText({
           model: gateway.languageModel(target),
-          messages,
+          messages: buildMessages(spec),
         });
         const image = result.files.find((file) =>
           file.mediaType?.startsWith("image/"),

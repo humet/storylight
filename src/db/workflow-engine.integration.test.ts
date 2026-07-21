@@ -24,7 +24,16 @@ import {
   type SyntheticStageKey,
 } from "@/application/workflows/synthetic-workflow";
 import { GENERATE_CHARACTER_CANDIDATES_TYPE } from "@/application/workflows/generate-character-candidates-workflow";
-import { REFERENCE_VIEWS } from "@/domain/reference-view";
+import type {
+  GeneratedImage,
+  ImageGenerationSpec,
+  ImageModel,
+} from "@/application/ports/image-model";
+import {
+  ANCHOR_REFERENCE_VIEW,
+  REFERENCE_VIEWS,
+  type ReferenceView,
+} from "@/domain/reference-view";
 import type { AuthenticatedActor } from "@/domain/actor";
 import type { CharacterProfilePayload } from "@/domain/character";
 import { generationFailedError, invalidCommandError } from "@/lib/errors";
@@ -860,7 +869,10 @@ describe("real consumer: generate character candidates on the engine", () => {
         .update(workflowExecutions)
         .set({
           status: "waiting",
-          currentStage: `paint-${REFERENCE_VIEWS[0]}`,
+          // Reset to the FIRST stage — the anchor view — so every paint stage
+          // (anchor first, then the conditioned views) and the assembly stage
+          // re-run in order on the re-drive.
+          currentStage: `paint-${ANCHOR_REFERENCE_VIEW}`,
           leaseOwner: null,
           leaseExpiresAt: null,
           completedAt: null,
@@ -880,6 +892,85 @@ describe("real consumer: generate character candidates on the engine", () => {
       expect(afterSecond).toHaveLength(1);
       expect(afterSecond[0].id).toBe(afterFirst[0].id);
       expect(afterSecond[0].assets).toHaveLength(REFERENCE_VIEWS.length);
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("paints the anchor view FIRST and conditions every other view on it (coherent set)", async () => {
+    const storageRoot = await mkdtemp(path.join(tmpdir(), "storylight-wf-"));
+    try {
+      const user = await seedUser("coherent-owner");
+      const familyId = await seedFamily(user, "Coherent");
+      const actor = ownerActor(user, familyId);
+
+      const characterRepo = createCharacterRepository(db);
+      const visualRepo = createVisualAssetRepository(db);
+      const workflowRepo = createWorkflowRepository(db);
+      const commands = createCharacterCommands({
+        familyRepository: familyRepo,
+        characterRepository: characterRepo,
+      });
+      const character = await commands.createCharacterProfile(
+        actor,
+        payload("Rosa"),
+      );
+
+      // A SPY image model that records, in call order, which view was generated
+      // and whether it was conditioned on an anchor — delegating byte production
+      // to the deterministic fake so the pipeline stays offline and unchanged.
+      const fake = createFakeImageModel();
+      const calls: Array<{ view: ReferenceView; hasAnchor: boolean }> = [];
+      const spy: ImageModel = {
+        async generate(spec: ImageGenerationSpec): Promise<GeneratedImage> {
+          calls.push({
+            view: spec.view,
+            hasAnchor: Boolean(spec.anchorImage),
+          });
+          return fake.generate(spec);
+        },
+      };
+
+      const visualCharacterService = createVisualCharacterService({
+        familyRepository: familyRepo,
+        characterRepository: characterRepo,
+        visualAssetRepository: visualRepo,
+        objectStorage: createFilesystemObjectStorage(storageRoot),
+        imageModel: spy,
+      });
+      const registry = createWorkflowRegistry({
+        visualCharacterService,
+        structuredGenerator: {} as never,
+        generationRunRepository: {} as never,
+      });
+      const engine = createWorkflowEngine({ repo: workflowRepo, registry });
+      const service = createWorkflowService({
+        familyRepository: familyRepo,
+        workflowRepository: workflowRepo,
+        registry,
+        dispatcher: recordingDispatcher(),
+      });
+
+      const handle = await service.startWorkflow(
+        actor,
+        GENERATE_CHARACTER_CANDIDATES_TYPE,
+        `coherent-${character.id}`,
+        { characterId: character.id },
+      );
+      const drive = await engine.runToCompletion(handle.workflowId);
+      expect(drive.finalStatus).toBe("completed");
+
+      // One image call per view.
+      expect(calls).toHaveLength(REFERENCE_VIEWS.length);
+      // The ANCHOR view is generated FIRST, with NO anchor conditioning.
+      expect(calls[0].view).toBe(ANCHOR_REFERENCE_VIEW);
+      expect(calls[0].hasAnchor).toBe(false);
+      // Every subsequent view is a DIFFERENT view, each conditioned on the anchor.
+      const rest = calls.slice(1);
+      expect(rest.map((c) => c.view).sort()).toEqual(
+        REFERENCE_VIEWS.filter((v) => v !== ANCHOR_REFERENCE_VIEW).sort(),
+      );
+      expect(rest.every((c) => c.hasAnchor)).toBe(true);
     } finally {
       await rm(storageRoot, { recursive: true, force: true });
     }

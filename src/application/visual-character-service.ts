@@ -7,6 +7,7 @@ import {
 import { assertDecodableImage } from "@/domain/image-validation";
 import { nameBasedUuid } from "@/domain/name-uuid";
 import {
+  ANCHOR_REFERENCE_VIEW,
   orderByReferenceView,
   REFERENCE_VIEWS,
   type ReferenceView,
@@ -27,7 +28,7 @@ import {
   unauthorisedError,
 } from "@/lib/errors";
 import { authorizeFamilyAction } from "./family-access";
-import type { ImageModel } from "./ports/image-model";
+import type { GeneratedImage, ImageModel } from "./ports/image-model";
 import type { ObjectStorage } from "./ports/object-storage";
 import type { CharacterRepository } from "./ports/character-repository";
 import type { FamilyRepository } from "./ports/family-repository";
@@ -98,6 +99,16 @@ export interface GenerateCandidateViewInput {
   setIndex: number;
   view: ReferenceView;
   idempotencyKey: string;
+  /**
+   * COHERENT SET (ADR-003): the storage key of the ALREADY-PAINTED anchor view
+   * (`ANCHOR_REFERENCE_VIEW`), supplied for every NON-anchor view. The service
+   * reads those bytes from its own object storage and conditions this view on
+   * them so the whole set is the same child in the same outfit. Absent when
+   * painting the anchor view itself. The anchor view stage runs first, so its key
+   * is always available to the later stages. The key never leaves the server and
+   * the bytes never enter a workflow payload.
+   */
+  anchorStorageKey?: string;
 }
 
 /** Assemble the candidate-set record from the per-view assets already uploaded. */
@@ -249,7 +260,9 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
     candidateSetId: string;
     view: ReferenceView;
     idempotencyKey: string | undefined;
-  }): Promise<NewVisualAsset> {
+    /** Bytes of the painted anchor view — conditions every NON-anchor view. */
+    anchorImage?: { bytes: Uint8Array; contentType: string };
+  }): Promise<{ asset: NewVisualAsset; image: GeneratedImage }> {
     const {
       familyId,
       characterId,
@@ -258,6 +271,7 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
       candidateSetId,
       view,
       idempotencyKey,
+      anchorImage,
     } = args;
     const assetId = idempotencyKey
       ? await nameBasedUuid(candidateSetId, "asset", view)
@@ -268,6 +282,7 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
       descriptor,
       artBibleVersion: ART_BIBLE_VERSION,
       seed,
+      anchorImage,
     });
 
     // MIME + decode validation BEFORE the private upload.
@@ -294,17 +309,51 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
     }
 
     return {
-      id: assetId,
-      view,
-      storageKey: key,
-      contentType: image.contentType,
-      checksum,
-      byteSize: image.bytes.byteLength,
-      width: image.width,
-      height: image.height,
-      model: image.model,
-      seed: image.seed,
+      asset: {
+        id: assetId,
+        view,
+        storageKey: key,
+        contentType: image.contentType,
+        checksum,
+        byteSize: image.bytes.byteLength,
+        width: image.width,
+        height: image.height,
+        model: image.model,
+        seed: image.seed,
+      },
+      image,
     };
+  }
+
+  /**
+   * Read the ALREADY-PAINTED anchor view's bytes for coherent-set conditioning.
+   * Defence in depth: the key MUST be inside the caller's family+character scope
+   * (it was produced by a prior stage of the same authorised workflow), and the
+   * bytes are used ONLY as a generation reference — never returned to a client.
+   */
+  async function readAnchorImage(
+    familyId: string,
+    characterId: string,
+    anchorStorageKey: string,
+  ): Promise<{ bytes: Uint8Array; contentType: string }> {
+    const prefix = `families/${familyId}/characters/${characterId}/`;
+    if (!anchorStorageKey.startsWith(prefix)) {
+      throw generationFailedError({
+        retryable: false,
+        internalDetail: `Anchor key "${anchorStorageKey}" is outside family/character scope.`,
+        stage: "visual.anchor",
+      });
+    }
+    const object = await objectStorage.read(anchorStorageKey);
+    if (!object) {
+      throw generationFailedError({
+        retryable: false,
+        safeMessage: "We couldn't finish painting these options.",
+        internalDetail: `Anchor image missing at "${anchorStorageKey}".`,
+        stage: "visual.anchor",
+      });
+    }
+    return { bytes: object.bytes, contentType: object.contentType };
   }
 
   return {
@@ -334,18 +383,46 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
           idempotencyKey,
           setIndex,
         );
-        const assets: NewVisualAsset[] = [];
+        // COHERENT SET (ADR-003): paint the ANCHOR view FIRST, then condition
+        // every other view on its bytes so the whole set is one child in one
+        // outfit. Assets are recorded in the canonical `REFERENCE_VIEWS` order
+        // (front portrait first), independent of this paint order.
+        const byView = new Map<ReferenceView, NewVisualAsset>();
+        const anchor = await paintOneView({
+          ...ctx,
+          characterId,
+          candidateSetId,
+          view: ANCHOR_REFERENCE_VIEW,
+          idempotencyKey,
+        });
+        byView.set(ANCHOR_REFERENCE_VIEW, anchor.asset);
+        const anchorImage = {
+          bytes: anchor.image.bytes,
+          contentType: anchor.image.contentType,
+        };
         for (const view of REFERENCE_VIEWS) {
-          assets.push(
-            await paintOneView({
-              ...ctx,
-              characterId,
-              candidateSetId,
-              view,
-              idempotencyKey,
-            }),
-          );
+          if (view === ANCHOR_REFERENCE_VIEW) continue;
+          const painted = await paintOneView({
+            ...ctx,
+            characterId,
+            candidateSetId,
+            view,
+            idempotencyKey,
+            anchorImage,
+          });
+          byView.set(view, painted.asset);
         }
+        const assets = REFERENCE_VIEWS.map((view) => {
+          const asset = byView.get(view);
+          if (!asset) {
+            throw generationFailedError({
+              retryable: false,
+              internalDetail: `Missing painted view "${view}" for set ${candidateSetId}.`,
+              stage: "visual.request",
+            });
+          }
+          return asset;
+        });
         created.push(
           await visualAssetRepository.recordCandidateSet({
             familyId: ctx.familyId,
@@ -378,13 +455,25 @@ export function createVisualCharacterService(deps: VisualCharacterDeps) {
         input.idempotencyKey,
         input.setIndex,
       );
-      return paintOneView({
+      // COHERENT SET (ADR-003): condition every NON-anchor view on the anchor the
+      // earlier stage already painted (its bytes read from our own storage). The
+      // anchor view itself carries no anchor key.
+      const anchorImage = input.anchorStorageKey
+        ? await readAnchorImage(
+            ctx.familyId,
+            input.characterId,
+            input.anchorStorageKey,
+          )
+        : undefined;
+      const { asset } = await paintOneView({
         ...ctx,
         characterId: input.characterId,
         candidateSetId,
         view: input.view,
         idempotencyKey: input.idempotencyKey,
+        anchorImage,
       });
+      return asset;
     },
 
     /**
