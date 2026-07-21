@@ -1011,4 +1011,22 @@ describe("M8 series pipeline", () => {
       expect(run.modelRouteVersionId).not.toBe(newActiveId);
     }
   });
+
+  it("stamps the ACTIVE image-route version into the series pins at creation (rule 8 / ADR-009)", async () => {
+    const user = await seedUser("m8-imgpin");
+    const familyId = await seedFamily(user, "ImagePinners");
+    const theia = await seedCharacter(familyId, "theia-i", "Theia");
+    const juno = await seedCharacter(familyId, "juno-i", "Juno");
+    const actor = ownerActor(user, familyId);
+    const stack = buildStack(seriesScript());
+    const { storyId, workflowId } = await stack.seriesCommands.createSeries(
+      actor,
+      baseCommand([theia, juno], "series-imgpin"),
+    );
+    await drive(stack.engine, workflowId);
+
+    expect(
+      await stack.seriesRepository.getPinnedImageRouteVersion(storyId),
+    ).toBe("mvp-image-routes-v2");
+  });
 });

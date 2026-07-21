@@ -8,11 +8,12 @@ import type { ImageCapability } from "./model-capability";
  * language capabilities resolve to a `ModelRouteVersion`. The resolved target,
  * version and model id are recorded per run for lineage + cost management.
  *
- * MVP has ONE image-route version (`mvp-image-routes-v1`) with a routine and a
- * premium tier; per-series image-route PINNING beyond this single version is a
- * documented follow-up (recorded in BUILD_STATE) — the rule-8 obligation that
- * matters now is consuming the pinned VISUAL PROFILE versions for reference
- * selection, which M9 does.
+ * The registry is a source-controlled HISTORY of immutable versions (v1, v2, …);
+ * a series pins the version active at its creation and its GENERATION tiers resolve
+ * against that pinned version thereafter (rule 8 / ADR-009), so a later route swap
+ * never changes an existing series' look. The VISION REVIEW route always resolves
+ * the active version (ADR-009 scope). The pinned VISUAL PROFILE versions (which
+ * reference set) are pinned separately and consumed by reference selection.
  */
 export interface ImageRouteResolution {
   capability: ImageCapability;

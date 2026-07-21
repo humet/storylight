@@ -125,6 +125,12 @@ interface PreparePayload {
   setting: SceneSetting | null;
   /** Declared wardrobe state (ADR-008 part 2), or null ⇒ everyday reference outfit. */
   wardrobe: SceneWardrobe | null;
+  /**
+   * The IMAGE-ROUTE version the GENERATION tiers resolve against (rule 8 / ADR-009):
+   * a series' PINNED version, or null for a one-off (⇒ the active version). Resolved
+   * once in the prepare stage; a series with no pin is a loud error there.
+   */
+  imageRouteVersion: string | null;
   expectedChildren: { characterKey: string }[];
   expectedCount: number;
 }
@@ -151,6 +157,8 @@ interface PaintPhasePayload {
   winningAssetId: string | null;
   winningContentType: string | null;
   winningModel: string | null;
+  /** The image-route version the winning GENERATION route resolved from (provenance). */
+  winningRouteVersion: string | null;
   request: ImageSceneRequest | null;
   verdict: VisionVerdict | null;
 }
@@ -205,6 +213,7 @@ function skippedPhase(phase: ImagePhase): PaintPhasePayload {
     winningAssetId: null,
     winningContentType: null,
     winningModel: null,
+    winningRouteVersion: null,
     request: null,
     verdict: null,
   };
@@ -353,11 +362,19 @@ export function createGenerateIllustrationWorkflow(
       winningAssetId: null,
       winningContentType: null,
       winningModel: null,
+      winningRouteVersion: null,
       request: null,
       verdict: null,
     };
 
-    const genRoute = imageRouteRegistry.resolveGeneration(phase);
+    // Resolve the GENERATION route against the series' PINNED version (rule 8 /
+    // ADR-009); `prep.imageRouteVersion` is the pinned version for a series and
+    // null for a one-off (⇒ the active version). An unknown pinned version throws
+    // loudly inside the registry — never a silent fallback to active.
+    const genRoute = imageRouteRegistry.resolveGeneration(
+      phase,
+      prep.imageRouteVersion ?? undefined,
+    );
     const request = buildImageSceneRequest({
       spec: { scene: job.sceneDescription, aspect },
       artBible: MVP_ART_BIBLE,
@@ -539,6 +556,7 @@ export function createGenerateIllustrationWorkflow(
         winningAssetId: originalId,
         winningContentType: generated.contentType,
         winningModel: generated.model,
+        winningRouteVersion: genRoute.version,
         verdict,
       };
     }
@@ -583,6 +601,25 @@ export function createGenerateIllustrationWorkflow(
             job.storyType === "series"
               ? await seriesRepository.getPinnedVisualProfiles(job.storyId)
               : null;
+
+          // Resolve the IMAGE-ROUTE version the GENERATION tiers will pin to (rule
+          // 8 / ADR-009). A series uses its pinned version; a one-off floats with
+          // the active version (null ⇒ active in the registry). A series with NO
+          // pin should not exist post-backfill — fail LOUDLY rather than silently
+          // painting it with whatever route is active today.
+          let imageRouteVersion: string | null = null;
+          if (job.storyType === "series") {
+            imageRouteVersion =
+              await seriesRepository.getPinnedImageRouteVersion(job.storyId);
+            if (!imageRouteVersion) {
+              throw generationFailedError({
+                retryable: false,
+                safeMessage: "This picture could not be finished.",
+                internalDetail: `Series ${job.storyId} has no pinned image-route version (spec ${specId}).`,
+                stage: "illustration.prepare",
+              });
+            }
+          }
 
           const children: SceneChild[] = [];
           const subjects: { characterKey: string; prominent: boolean }[] = [];
@@ -634,6 +671,7 @@ export function createGenerateIllustrationWorkflow(
             companions: job.companions,
             setting: job.setting,
             wardrobe: job.wardrobe,
+            imageRouteVersion,
             expectedChildren: children.map((c) => ({
               characterKey: c.characterKey,
             })),
@@ -776,7 +814,12 @@ export function createGenerateIllustrationWorkflow(
             ),
             model: approved.winningModel ?? "unknown",
             artBibleVersion: MVP_ART_BIBLE.version,
-            imageRouteVersion: imageRouteRegistry.resolveReview().version,
+            // Provenance: stamp the version the GENERATION route the winning image
+            // was painted with actually resolved from (the series' pinned version,
+            // or active for a one-off) — NOT the review route's version (ADR-009).
+            imageRouteVersion:
+              approved.winningRouteVersion ??
+              imageRouteRegistry.activeVersion(),
             requestSnapshot: approved.request,
             verdictSnapshot: approved.verdict,
           });

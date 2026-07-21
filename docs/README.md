@@ -91,6 +91,7 @@ Provider choices must remain replaceable. Domain code must not import provider S
 - [`decisions/ADR-006-concrete-infrastructure.md`](decisions/ADR-006-concrete-infrastructure.md)
 - [`decisions/ADR-007-no-runtime-image-encoding.md`](decisions/ADR-007-no-runtime-image-encoding.md)
 - [`decisions/ADR-008-visual-continuity-beyond-child-identity.md`](decisions/ADR-008-visual-continuity-beyond-child-identity.md)
+- [`decisions/ADR-009-per-series-image-route-pinning.md`](decisions/ADR-009-per-series-image-route-pinning.md)
 
 ## Claude Code entry point
 

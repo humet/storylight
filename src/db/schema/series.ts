@@ -86,6 +86,13 @@ export const seriesBibles = pgTable(
     pinnedVisualProfiles: jsonb("pinned_visual_profiles")
       .$type<Record<string, string>>()
       .notNull(),
+    /**
+     * The IMAGE-ROUTE version active at series creation (rule 8 / ADR-009). Chapter
+     * illustration GENERATION tiers resolve against this pinned version, so a later
+     * route swap (e.g. a new routine image model) never changes an existing series'
+     * visual identity. The vision-review route floats with the active version.
+     */
+    pinnedImageRouteVersion: text("pinned_image_route_version").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -33,7 +33,15 @@ import { createSeriesRepository } from "./repositories/series-repository";
 import { createStoryRepository } from "./repositories/story-repository";
 import { createVisualAssetRepository } from "./repositories/visual-asset-repository";
 import { createWorkflowRepository } from "./repositories/workflow-repository";
-import { illustrationAssets, imageGenerationRuns, users } from "./schema";
+import {
+  illustrationAssets,
+  illustrationRevisions,
+  imageGenerationRuns,
+  seriesBibles,
+  users,
+} from "./schema";
+import type { SeriesBible } from "@/domain/series-bible";
+import type { StoryDna } from "@/domain/story-dna";
 import { createTestDatabase, type TestDatabase } from "./testing";
 
 /**
@@ -216,6 +224,114 @@ async function seedPublishedStory(actor: AuthenticatedActor) {
     revisionId,
   );
   return { familyId, storyId, characterId: character.id, specId: specIds[0] };
+}
+
+/**
+ * Seed a published SERIES chapter with one illustration spec (ADR-009 per-series
+ * image-route pinning). `pinnedImageRouteVersion` is stamped onto the series bible;
+ * pass null to simulate a (post-backfill impossible) series with no pin — the
+ * illustration job must fail LOUDLY rather than paint it with the active route.
+ * Only the pin columns are read by the illustration job, so the bible/DNA are
+ * minimal stubs.
+ */
+async function seedPublishedSeriesStory(
+  actor: AuthenticatedActor,
+  pinnedImageRouteVersion: string | null,
+) {
+  const familyId = actor.familyIds[0];
+  const characterRepo = createCharacterRepository(db);
+  const character = await characterRepo.createCharacter({
+    familyId,
+    characterKey: "rosa-series01",
+    payload: CHARACTER_PAYLOAD,
+  });
+  await characterRepo.setStatus({
+    familyId,
+    characterId: character.id,
+    status: "active",
+    approvedAt: new Date(),
+  });
+
+  const storyRepo = createStoryRepository(db);
+  const storyId = "00000000-0000-4000-8000-0000000000c1";
+  await storyRepo.createStoryIfAbsent({
+    id: storyId,
+    familyId,
+    userId: actor.userId,
+    type: "series",
+    generationInput: {
+      storyId,
+      characterIds: [character.id],
+      idea: "A pinned series",
+      theme: null,
+      length: "short",
+      tone: "gentle",
+    },
+  });
+
+  if (pinnedImageRouteVersion) {
+    await db.insert(seriesBibles).values({
+      storyId,
+      familyId,
+      schemaVersion: "series-bible.v1",
+      title: "Pinned Series",
+      spoilerFreePremise: "A gentle pinned series.",
+      chapterCount: 5,
+      bible: {} as unknown as SeriesBible,
+      storyDna: {} as unknown as StoryDna,
+      pinnedRouteProfile: {},
+      pinnedPromptVersions: {},
+      pinnedSchemaVersions: [],
+      pinnedVisualProfiles: {},
+      pinnedImageRouteVersion,
+    });
+  }
+
+  const { revisionId } = await storyRepo.publishOneOffChapter({
+    familyId,
+    storyId,
+    workflowId: "seed-series-wf",
+    title: PLAN.title,
+    plan: PLAN,
+    draftParagraphs: ["Rosa stood in the garden.", "She lifted the lantern."],
+    wordCount: 8,
+    schemaVersion: "chapter-draft.v1",
+    review: { review: REVIEW, decision: "approve", revisionsUsed: 0 },
+    illustrationSpecs: [
+      {
+        anchorKey: "anchor-1",
+        afterParagraph: 1,
+        caption: "Rosa lifts the glowing lantern",
+        sceneDescription: "Rosa lifts a warm lantern in a dusky garden",
+        aspect: "landscape",
+        schemaVersion: "illustration-plan.v1",
+        subjectCharacterIds: [character.id],
+        prominentCharacterId: character.id,
+      },
+    ],
+  });
+
+  const illustrationRepo = createIllustrationRepository(db);
+  const specIds = await illustrationRepo.listSpecIdsForChapterRevision(
+    familyId,
+    revisionId,
+  );
+  return { familyId, storyId, characterId: character.id, specId: specIds[0] };
+}
+
+/**
+ * Image-run rows straight from the table — the port's read model (ImageRunRecord)
+ * omits routeVersion/target, which the ADR-009 pinning assertions need.
+ */
+async function imageRunsFor(workflowId: string) {
+  return db
+    .select({
+      routeVersion: imageGenerationRuns.routeVersion,
+      target: imageGenerationRuns.target,
+      kind: imageGenerationRuns.kind,
+    })
+    .from(imageGenerationRuns)
+    .where(eq(imageGenerationRuns.workflowId, workflowId));
 }
 
 function buildImageStack(vision: VisionModel) {
@@ -540,5 +656,116 @@ describe("chapter illustration pipeline (M9 exit)", () => {
       "A brand new telling.",
       "With fresh words.",
     ]);
+  });
+
+  it("(ADR-009) a SERIES resolves its PINNED image-route version end-to-end: run rows + publication record the pin (differs from active); review floats to active", async () => {
+    const actor = await seedActor("series-pin");
+    // Pin to v1 (all-Gemini) — DIFFERENT from the active v2 (Seedream). This is a
+    // series created before the route swap; it must not drift to Seedream.
+    const { familyId, specId } = await seedPublishedSeriesStory(
+      actor,
+      "mvp-image-routes-v1",
+    );
+
+    const run = await runImageJob(
+      actor,
+      specId,
+      createFakeVisionModel(),
+      "job-series-pin",
+    );
+    expect(run.result.finalStatus).toBe("completed");
+    expect(
+      await run.illustrationRepository.getPublicationState(familyId, specId),
+    ).toBe("approved");
+
+    // Provenance FIX: the immutable revision records the PINNED GENERATION version
+    // (v1), NOT the review route's (active) version.
+    const [revision] = await db
+      .select({ imageRouteVersion: illustrationRevisions.imageRouteVersion })
+      .from(illustrationRevisions)
+      .where(eq(illustrationRevisions.specId, specId));
+    expect(revision.imageRouteVersion).toBe("mvp-image-routes-v1");
+
+    const runs = await imageRunsFor(run.executionId);
+    // The generation run resolved the PINNED v1 routine target (gemini-flash),
+    // NOT the active v2 target (Seedream).
+    const generation = runs.filter((r) => r.kind === "generation");
+    expect(generation).toHaveLength(1);
+    expect(generation[0].routeVersion).toBe("mvp-image-routes-v1");
+    expect(generation[0].target).toBe("google/gemini-3.1-flash-image");
+    // The review run FLOATED to the active version (v2) — review is upgradeable.
+    const review = runs.filter((r) => r.kind === "review");
+    expect(review[0].routeVersion).toBe("mvp-image-routes-v2");
+  });
+
+  it("(ADR-009) a backfilled series pinned to the CURRENT active version (v2) resolves v2 (Seedream) generation targets", async () => {
+    const actor = await seedActor("series-v2");
+    const { familyId, specId } = await seedPublishedSeriesStory(
+      actor,
+      "mvp-image-routes-v2",
+    );
+    const run = await runImageJob(
+      actor,
+      specId,
+      createFakeVisionModel(),
+      "job-series-v2",
+    );
+    expect(
+      await run.illustrationRepository.getPublicationState(familyId, specId),
+    ).toBe("approved");
+    const generation = (await imageRunsFor(run.executionId)).filter(
+      (r) => r.kind === "generation",
+    );
+    expect(generation[0].routeVersion).toBe("mvp-image-routes-v2");
+    expect(generation[0].target).toBe("bytedance/seedream-5.0-pro");
+  });
+
+  it("(ADR-009) a ONE-OFF resolves + records the ACTIVE image-route version (Seedream v2)", async () => {
+    const actor = await seedActor("oneoff-active");
+    const { familyId, specId } = await seedPublishedStory(actor);
+    const run = await runImageJob(
+      actor,
+      specId,
+      createFakeVisionModel(),
+      "job-oneoff-active",
+    );
+    expect(
+      await run.illustrationRepository.getPublicationState(familyId, specId),
+    ).toBe("approved");
+
+    const [revision] = await db
+      .select({ imageRouteVersion: illustrationRevisions.imageRouteVersion })
+      .from(illustrationRevisions)
+      .where(eq(illustrationRevisions.specId, specId));
+    expect(revision.imageRouteVersion).toBe("mvp-image-routes-v2");
+
+    const generation = (await imageRunsFor(run.executionId)).filter(
+      (r) => r.kind === "generation",
+    );
+    expect(generation[0].routeVersion).toBe("mvp-image-routes-v2");
+    expect(generation[0].target).toBe("bytedance/seedream-5.0-pro");
+  });
+
+  it("(ADR-009) a SERIES with NO pinned image-route version fails LOUDLY (never silently paints with the active route)", async () => {
+    const actor = await seedActor("series-nopin");
+    // A series story with NO bible row ⇒ no pinned image-route version.
+    const { familyId, specId } = await seedPublishedSeriesStory(actor, null);
+
+    const run = await runImageJob(
+      actor,
+      specId,
+      createFakeVisionModel(),
+      "job-series-nopin",
+    );
+    // The prepare stage throws a non-retryable error → the workflow fails; no
+    // image is generated and no spend is recorded.
+    expect(run.result.finalStatus).toBe("failed");
+    expect(
+      await run.illustrationRepository.getPublicationState(familyId, specId),
+    ).toBe("pending");
+    const generation = (
+      await run.imageRunRepository.listRunsForWorkflow(run.executionId)
+    ).filter((r) => r.kind === "generation");
+    expect(generation).toHaveLength(0);
   });
 });

@@ -27,6 +27,7 @@ import { chapterDraftWireSchema } from "../schemas/chapter-draft.schema";
 import { chapterReviewWireSchema } from "../schemas/chapter-review.schema";
 import { continuityChangeWireSchema } from "../schemas/continuity-change.schema";
 import { illustrationPlanWireSchema } from "../schemas/illustration-plan.schema";
+import { ACTIVE_IMAGE_ROUTE_VERSION } from "../model-routes/image-route-registry";
 import type { LanguageCapability } from "@/domain/model-capability";
 import type { PinnedRouteProfile } from "@/domain/model-route";
 import { createInitialContinuityState } from "@/domain/continuity";
@@ -53,7 +54,8 @@ import { createChapterStages, type ChapterStagesDeps } from "./chapter-stages";
  *
  * Stages: series-dna (app) → series-bible (model, structural+semantic validated) →
  * persist-bible (app: persist accepted bible + blueprints + threads + initial
- * snapshot; PIN model-route / prompt / schema / visual-profile versions) → the
+ * snapshot; PIN model-route / prompt / schema / visual-profile / image-route
+ * versions) → the
  * SHARED chapter stages, which for acceptedChapterCount=0 target Chapter 1.
  */
 
@@ -319,6 +321,10 @@ export function createCreateSeriesWorkflow(
             pinnedPromptVersions: pinnedPromptVersions(),
             pinnedSchemaVersions: PINNED_SCHEMA_VERSIONS,
             pinnedVisualProfiles,
+            // PIN the image-route version active NOW (rule 8 / ADR-009), stamped
+            // from the source-controlled constant exactly as the schema/prompt pins
+            // are — so a later route swap never changes this series' look.
+            pinnedImageRouteVersion: ACTIVE_IMAGE_ROUTE_VERSION,
             initialContinuity,
           });
           return { output: { pinnedCapabilities: PINNED_CAPABILITIES.length } };

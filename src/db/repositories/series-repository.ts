@@ -89,6 +89,7 @@ export function createSeriesRepository(db: Database): SeriesRepository {
             pinnedPromptVersions: input.pinnedPromptVersions,
             pinnedSchemaVersions: input.pinnedSchemaVersions,
             pinnedVisualProfiles: input.pinnedVisualProfiles,
+            pinnedImageRouteVersion: input.pinnedImageRouteVersion,
           })
           .onConflictDoNothing({ target: seriesBibles.storyId });
 
@@ -209,6 +210,15 @@ export function createSeriesRepository(db: Database): SeriesRepository {
     ): Promise<Record<string, string> | null> {
       const [row] = await db
         .select({ pinned: seriesBibles.pinnedVisualProfiles })
+        .from(seriesBibles)
+        .where(eq(seriesBibles.storyId, storyId))
+        .limit(1);
+      return row ? row.pinned : null;
+    },
+
+    async getPinnedImageRouteVersion(storyId): Promise<string | null> {
+      const [row] = await db
+        .select({ pinned: seriesBibles.pinnedImageRouteVersion })
         .from(seriesBibles)
         .where(eq(seriesBibles.storyId, storyId))
         .limit(1);

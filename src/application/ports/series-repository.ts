@@ -40,6 +40,8 @@ export interface PersistSeriesBibleInput {
   pinnedPromptVersions: Record<string, string>;
   pinnedSchemaVersions: string[];
   pinnedVisualProfiles: Record<string, string>;
+  /** The image-route version active at creation (rule 8 / ADR-009). */
+  pinnedImageRouteVersion: string;
   /** The initial (afterChapter 0) continuity snapshot to seed the chain. */
   initialContinuity: ContinuityState;
   now?: Date;
@@ -166,6 +168,14 @@ export interface SeriesRepository {
   getPinnedVisualProfiles(
     storyId: string,
   ): Promise<Record<string, string> | null>;
+
+  /**
+   * The series' PINNED image-route version (rule 8 / ADR-009), captured at
+   * creation. Consumed by chapter illustration jobs so GENERATION tiers resolve
+   * against the version active when the series began, never a later route swap.
+   * Null when the story is not a series with a bible.
+   */
+  getPinnedImageRouteVersion(storyId: string): Promise<string | null>;
 
   /**
    * The immutable continuity snapshot chain for a series, ordered by chapter (M9
