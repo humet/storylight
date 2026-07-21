@@ -867,6 +867,7 @@ export function createChapterStages(deps: ChapterStagesDeps): WorkflowStage[] {
               schemaVersion: illustrationPlanWireSchema.schemaVersion,
               ...(s.companions ? { companions: s.companions } : {}),
               ...(s.setting ? { setting: s.setting } : {}),
+              ...(s.wardrobe ? { wardrobe: s.wardrobe } : {}),
               subjectCharacterIds,
               prominentCharacterId,
             })),

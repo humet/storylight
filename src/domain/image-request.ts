@@ -107,6 +107,43 @@ export interface SceneSetting {
   timeOfDay: TimeOfDay;
 }
 
+/**
+ * The RESERVED wardrobe state key (ADR-008 part 2): the child's approved everyday
+ * reference outfit. It is implicit — the planning model never declares or describes
+ * it, and a scene that references it (or references nothing) is dressed from the
+ * approved outfit REFERENCE, exactly as before part 2.
+ */
+export const EVERYDAY_WARDROBE_KEY = "everyday";
+
+/**
+ * The declared WARDROBE STATE a scene depicts the child in (ADR-008 part 2). The
+ * child's wardrobe is PER-SCENE story data, not a single fixed constant: a story may
+ * legitimately dress the child differently (pyjamas for a night porch, a raincoat, a
+ * swimsuit) when the PROSE motivates it. Wardrobe states are declared ONCE at story
+ * level (like companions) and each scene references one by key, defaulting to
+ * `everyday`. The `appearance` is DENORMALISED onto every scene that shares a state
+ * (copied from the single story-level declaration), so five pyjama scenes carry
+ * identical pyjamas text. `everyday` (or an absent wardrobe) carries no appearance —
+ * the approved outfit reference is the authority there (safe absence = pre-part-2).
+ */
+export interface SceneWardrobe {
+  /** The declared state key. `everyday` is reserved (the approved reference outfit). */
+  stateKey: string;
+  /** The declared outfit for a non-everyday state; absent for `everyday`. */
+  appearance?: string;
+}
+
+/**
+ * True when the wardrobe is the reserved everyday outfit (or absent) — the ONLY case
+ * where the approved outfit-slot reference is attached and judged as before part 2.
+ * A non-everyday state instead gets a deterministic prompt directive + a review note.
+ * Pure; the single predicate behind both the prompt directive and the
+ * outfit-reference attachment decision.
+ */
+export function isEverydayWardrobe(wardrobe?: SceneWardrobe | null): boolean {
+  return !wardrobe || wardrobe.stateKey === EVERYDAY_WARDROBE_KEY;
+}
+
 /** Join names as a readable English list ("Ivy", "Ivy and Max", "Ivy, Max and Sam"). */
 function formatNameList(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
@@ -202,6 +239,62 @@ export function describeSettingForPrompt(setting?: SceneSetting): string[] {
   return [location ? `SETTING: ${location}, ${time}.` : `SETTING: ${time}.`];
 }
 
+/**
+ * The explicit WARDROBE directive lines for GENERATION (ADR-008 part 2), derived
+ * purely from the declared state. An everyday/absent wardrobe emits NOTHING (the
+ * approved outfit reference is attached instead — byte-identical to pre-part-2); a
+ * non-everyday state pins the declared outfit AND reiterates that face/hair/features
+ * still follow the identity reference (rule 7 — identity is never conditional on the
+ * outfit). Model-neutral; the adapter assembles the prompt string (rule 12).
+ */
+export function describeWardrobeForPrompt(
+  wardrobe?: SceneWardrobe | null,
+): string[] {
+  if (isEverydayWardrobe(wardrobe)) return [];
+  const appearance = (wardrobe?.appearance ?? "").trim();
+  if (!appearance) return [];
+  return [
+    `WARDROBE: in this scene the child is dressed for the story's moment, NOT in the everyday reference outfit — the child is wearing ${appearance}. Draw exactly this clothing.`,
+    "Change ONLY the clothing: the child's face, hair, skin tone and features MUST still match the attached identity reference exactly (never alter the child's likeness).",
+  ];
+}
+
+/**
+ * The WARDROBE continuity note fed to the vision REVIEW (ADR-008 part 2). Feeds the
+ * existing `outfitNotes` mechanism (the review's `outfitConsistent` verdict), so no
+ * parallel verdict is added. Everyday/absent ⇒ NO note ⇒ the reviewer compares the
+ * outfit against the ATTACHED everyday outfit reference exactly as today; a
+ * non-everyday state ⇒ a note describing the declared outfit to compare against
+ * (there is no outfit reference image attached for such a scene). Pure.
+ */
+export function describeWardrobeForReview(
+  wardrobe?: SceneWardrobe | null,
+): string[] {
+  if (isEverydayWardrobe(wardrobe)) return [];
+  const appearance = (wardrobe?.appearance ?? "").trim();
+  if (!appearance) return [];
+  return [
+    `the child is wearing ${appearance} for this scene (a story-motivated outfit; there is no outfit reference image — judge the clothing against this description)`,
+  ];
+}
+
+/**
+ * The reference selections whose BYTES to attach for a scene, given its wardrobe
+ * (ADR-008 part 2). The identity + second-angle references are ALWAYS kept (rule 7 —
+ * identity is never conditional); the everyday outfit-slot reference is attached
+ * ONLY for an everyday (or absent) wardrobe. A non-everyday scene omits the outfit
+ * reference and relies on the deterministic {@link describeWardrobeForPrompt}
+ * directive instead, so the everyday outfit does not fight a story-motivated change.
+ * Pure — the attach/omit decision lives in ONE place, reused by the workflow.
+ */
+export function referencesForWardrobe(
+  references: SelectedReference[],
+  wardrobe?: SceneWardrobe | null,
+): SelectedReference[] {
+  if (isEverydayWardrobe(wardrobe)) return references;
+  return references.filter((r) => r.slot !== "outfit");
+}
+
 export interface ImageSceneRequest {
   artBibleVersion: string;
   /** Style directives lifted verbatim from the Art Bible (medium + qualities). */
@@ -219,6 +312,12 @@ export interface ImageSceneRequest {
   companions: SceneCompanion[];
   /** Canonical setting + time-of-day the render must honour (ADR-008 part 4). */
   setting?: SceneSetting;
+  /**
+   * The declared wardrobe state for this scene (ADR-008 part 2). Absent / everyday ⇒
+   * no directive and the everyday outfit reference is attached; a non-everyday state
+   * ⇒ a deterministic wardrobe directive and the outfit reference is omitted.
+   */
+  wardrobe?: SceneWardrobe;
   /** Selected approved reference assets, in priority order (never model-chosen). */
   references: SelectedReference[];
   /** Continuity notes (outfits, props, locations) the render must respect. */
@@ -246,6 +345,8 @@ export interface BuildImageSceneRequestInput {
   companions?: SceneCompanion[];
   /** Canonical setting (optional; absent ⇒ no setting directive, review skips it). */
   setting?: SceneSetting;
+  /** Declared wardrobe state (optional; absent/everyday ⇒ no directive, ADR-008 part 2). */
+  wardrobe?: SceneWardrobe;
   references: SelectedReference[];
   continuityNotes: string[];
   seed: number;
@@ -290,6 +391,16 @@ export function buildImageSceneRequest(
           setting: {
             location: input.setting.location.trim(),
             timeOfDay: input.setting.timeOfDay,
+          },
+        }
+      : {}),
+    ...(input.wardrobe
+      ? {
+          wardrobe: {
+            stateKey: input.wardrobe.stateKey.trim(),
+            ...(input.wardrobe.appearance
+              ? { appearance: input.wardrobe.appearance.trim() }
+              : {}),
           },
         }
       : {}),

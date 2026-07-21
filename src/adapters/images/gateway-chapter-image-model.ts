@@ -15,6 +15,7 @@ import {
   describeCastForPrompt,
   describeCompanionsForPrompt,
   describeSettingForPrompt,
+  describeWardrobeForPrompt,
   type ImageSceneRequest,
 } from "@/domain/image-request";
 import type { ReferenceImage } from "@/domain/reference-image";
@@ -188,6 +189,14 @@ export function buildInstruction(request: ImageSceneRequest): string {
   // ADR-008 part 3: pin each recurring companion's species + appearance so a
   // companion is not redrawn as a different animal from the prose alone.
   for (const directive of describeCompanionsForPrompt(request.companions)) {
+    lines.push(directive);
+  }
+
+  // ADR-008 part 2: for a non-everyday wardrobe, pin the declared outfit (no outfit
+  // reference is attached for such a scene) and reiterate that face/hair/features
+  // still follow the identity reference. Empty for an everyday/absent wardrobe (the
+  // everyday outfit reference is attached and speaks for itself — byte-identical).
+  for (const directive of describeWardrobeForPrompt(request.wardrobe)) {
     lines.push(directive);
   }
 

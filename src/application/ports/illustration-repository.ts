@@ -4,6 +4,7 @@ import type {
   IllustrationAspect,
   SceneCompanion,
   SceneSetting,
+  SceneWardrobe,
 } from "@/domain/image-request";
 
 /**
@@ -30,6 +31,8 @@ export interface SpecJob {
   companions: SceneCompanion[];
   /** Canonical setting + time-of-day (ADR-008 part 4), or null when not carried. */
   setting: SceneSetting | null;
+  /** Declared wardrobe state (ADR-008 part 2), or null ⇒ everyday reference outfit. */
+  wardrobe: SceneWardrobe | null;
   /** DB character ids of the children in this scene. */
   subjectCharacterIds: string[];
   prominentCharacterId: string | null;

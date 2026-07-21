@@ -1,5 +1,10 @@
 import { invalidCommandError } from "@/lib/errors";
-import type { SceneCompanion, SceneSetting } from "./image-request";
+import {
+  EVERYDAY_WARDROBE_KEY,
+  type SceneCompanion,
+  type SceneSetting,
+  type SceneWardrobe,
+} from "./image-request";
 import type { StoryDna } from "./story-dna";
 import type { ChapterDraft, DraftAnchor, OneOffPlan } from "./story-draft";
 
@@ -48,7 +53,11 @@ export interface IllustrationPlanWireLike {
     companions?: { key: string; species: string; appearance: string }[];
     /** ADR-008 part 4: declared setting + time-of-day (optional). */
     setting?: { location: string; timeOfDay: SceneSetting["timeOfDay"] };
+    /** ADR-008 part 2: the wardrobe STATE-KEY this scene references (optional). */
+    wardrobe?: string;
   }[];
+  /** ADR-008 part 2: the story's wardrobe STATES, declared once (optional). */
+  wardrobeStates?: { key: string; appearance: string }[];
 }
 
 export interface IllustrationSpec {
@@ -63,6 +72,13 @@ export interface IllustrationSpec {
   companions?: SceneCompanion[];
   /** Canonical setting + time-of-day (ADR-008 part 4); absent ⇒ not carried. */
   setting?: SceneSetting;
+  /**
+   * The declared wardrobe state for this scene (ADR-008 part 2). Carried (with the
+   * appearance denormalised from the story-level declaration) ONLY for a non-everyday
+   * state; an everyday/absent scene omits it ⇒ safe absence (uses the everyday
+   * outfit reference exactly as a pre-part-2 spec).
+   */
+  wardrobe?: SceneWardrobe;
 }
 
 // --- Plan ---------------------------------------------------------------
@@ -173,6 +189,27 @@ export function crossReferenceIllustrationPlan(
 ): void {
   const known = new Set(anchorKeys);
   const seen = new Set<string>();
+
+  // ADR-008 part 2: validate the story-level wardrobe STATES first, then check each
+  // scene's wardrobe reference against them. `everyday` is reserved/implicit — the
+  // model may not redeclare it — and every declared key must be unique.
+  const declaredWardrobe = new Set<string>();
+  for (const state of wire.wardrobeStates ?? []) {
+    if (state.key === EVERYDAY_WARDROBE_KEY) {
+      throw invalidCommandError({
+        internalDetail: `Wardrobe state "${EVERYDAY_WARDROBE_KEY}" is reserved and must not be declared.`,
+        stage: "illustration.cross-reference",
+      });
+    }
+    if (declaredWardrobe.has(state.key)) {
+      throw invalidCommandError({
+        internalDetail: `Duplicate wardrobe state key "${state.key}".`,
+        stage: "illustration.cross-reference",
+      });
+    }
+    declaredWardrobe.add(state.key);
+  }
+
   for (const spec of wire.illustrations) {
     if (!known.has(spec.anchorKey)) {
       throw invalidCommandError({
@@ -200,18 +237,50 @@ export function crossReferenceIllustrationPlan(
       }
       companionKeys.add(companion.key);
     }
+
+    // ADR-008 part 2: a scene may only reference the reserved `everyday` key or a
+    // wardrobe state DECLARED at story level (an alternate outfit must be a state the
+    // story defined — keeping the original unmotivated outfit-drift bug dead).
+    if (
+      spec.wardrobe &&
+      spec.wardrobe !== EVERYDAY_WARDROBE_KEY &&
+      !declaredWardrobe.has(spec.wardrobe)
+    ) {
+      throw invalidCommandError({
+        internalDetail: `Illustration "${spec.anchorKey}" references undeclared wardrobe state "${spec.wardrobe}".`,
+        stage: "illustration.cross-reference",
+      });
+    }
   }
 }
 
 export function normaliseIllustrationPlan(
   wire: IllustrationPlanWireLike,
 ): IllustrationSpec[] {
+  // ADR-008 part 2: resolve each scene's wardrobe state-KEY against the single
+  // story-level declaration, DENORMALISING the appearance onto every scene that
+  // shares the state — so five pyjama scenes carry identical pyjamas text (copied
+  // from one declaration). An everyday/absent reference resolves to no wardrobe
+  // (safe absence: the everyday outfit reference is the authority).
+  const appearanceByState = new Map(
+    (wire.wardrobeStates ?? []).map((state) => [
+      state.key,
+      state.appearance.trim(),
+    ]),
+  );
+  const resolveWardrobe = (key?: string): SceneWardrobe | undefined => {
+    if (!key || key === EVERYDAY_WARDROBE_KEY) return undefined;
+    const appearance = appearanceByState.get(key);
+    return { stateKey: key, ...(appearance ? { appearance } : {}) };
+  };
+
   return wire.illustrations.map((s) => {
     const companions = (s.companions ?? []).map((c) => ({
       key: c.key,
       species: c.species.trim(),
       appearance: c.appearance.trim(),
     }));
+    const wardrobe = resolveWardrobe(s.wardrobe);
     return {
       anchorKey: s.anchorKey,
       caption: s.caption.trim(),
@@ -228,6 +297,7 @@ export function normaliseIllustrationPlan(
             },
           }
         : {}),
+      ...(wardrobe ? { wardrobe } : {}),
     };
   });
 }

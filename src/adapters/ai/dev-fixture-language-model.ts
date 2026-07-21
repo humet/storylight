@@ -136,14 +136,16 @@ function reviewFixture(): unknown {
 function illustrationFixture(ctx: CanonicalContext): unknown {
   const keys = ctx.anchorKeys ?? [];
   return {
-    schemaVersion: "illustration-plan.v2",
+    schemaVersion: "illustration-plan.v3",
     illustrations: keys.map((anchorKey) => ({
       anchorKey,
       caption: "The garden glows softly in the evening light.",
       sceneDescription: "A small child in a safe garden at dusk, warm light.",
       aspect: "landscape",
       // ADR-008: a recurring companion + the setting, consistent with the plan
-      // fixture (a friendly firefly lights the path; a garden at dusk).
+      // fixture (a friendly firefly lights the path; a garden at dusk). The child is
+      // in everyday clothes throughout this story, so NO wardrobe is declared — the
+      // everyday outfit reference is used (ADR-008 part 2 default; safe absence).
       companions: [
         {
           key: "pip-the-firefly",

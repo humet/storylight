@@ -1,6 +1,10 @@
 import type { VisionVerdict } from "@/domain/image-job";
 import type { ImageRouteResolution } from "@/domain/image-route";
-import type { SceneCompanion, SceneSetting } from "@/domain/image-request";
+import type {
+  SceneCompanion,
+  SceneSetting,
+  SceneWardrobe,
+} from "@/domain/image-request";
 import type { ReferenceImage } from "@/domain/reference-image";
 
 /**
@@ -37,6 +41,15 @@ export interface VisionReviewRequest {
    * Absent ⇒ the setting check is skipped (safe absence). A mismatch is NON-blocking.
    */
   setting?: SceneSetting;
+  /**
+   * The declared wardrobe state for this scene (ADR-008 part 2/5). Absent/everyday ⇒
+   * the outfit is compared against the attached everyday outfit REFERENCE, exactly as
+   * before part 2; a non-everyday state feeds the `outfitNotes` mechanism so the
+   * reviewer compares the clothing against the DECLARED outfit (no reference is
+   * attached for such a scene). Reuses the existing `outfitConsistent` verdict —
+   * severity unchanged (NON-blocking, repair-triggering).
+   */
+  wardrobe?: SceneWardrobe;
   /** Continuity expectations the review checks (internal, model-neutral). */
   outfitNotes: string[];
   propNotes: string[];

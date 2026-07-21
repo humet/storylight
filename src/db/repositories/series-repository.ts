@@ -352,6 +352,8 @@ export function createSeriesRepository(db: Database): SeriesRepository {
                 companions: s.companions ?? [],
                 settingLocation: s.setting?.location ?? null,
                 settingTimeOfDay: s.setting?.timeOfDay ?? null,
+                wardrobeStateKey: s.wardrobe?.stateKey ?? null,
+                wardrobeAppearance: s.wardrobe?.appearance ?? null,
                 subjectCharacterIds: s.subjectCharacterIds,
                 prominentCharacterId: s.prominentCharacterId,
               })

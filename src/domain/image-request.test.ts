@@ -6,7 +6,12 @@ import {
   describeCastForPrompt,
   describeCompanionsForPrompt,
   describeSettingForPrompt,
+  describeWardrobeForPrompt,
+  describeWardrobeForReview,
+  isEverydayWardrobe,
+  referencesForWardrobe,
   resolveDimensions,
+  type SceneWardrobe,
 } from "./image-request";
 import type { SelectedReference } from "./reference-selection";
 
@@ -227,5 +232,126 @@ describe("describeSettingForPrompt (ADR-008 part 4: setting + time-of-day)", () 
     expect(
       describeSettingForPrompt({ location: "a meadow", timeOfDay: "day" })[0],
     ).toContain("full daylight");
+  });
+});
+
+describe("wardrobe states (ADR-008 part 2: per-scene wardrobe)", () => {
+  const pyjamas: SceneWardrobe = {
+    stateKey: "pyjamas",
+    appearance: "star-print flannel pyjamas",
+  };
+
+  // The child's reference set as selected for a scene: identity + a second angle for
+  // the prominent child, plus the everyday outfit-slot reference.
+  const childRefs: SelectedReference[] = [
+    {
+      slot: "identity",
+      assetId: "nell-front",
+      characterKey: "nell",
+      view: "front-portrait",
+    },
+    {
+      slot: "second-angle",
+      assetId: "nell-3q",
+      characterKey: "nell",
+      view: "three-quarter",
+    },
+    {
+      slot: "outfit",
+      assetId: "nell-outfit",
+      characterKey: "nell",
+      view: "default-outfit",
+    },
+  ];
+
+  describe("isEverydayWardrobe", () => {
+    it("treats absent and the reserved 'everyday' key as everyday", () => {
+      expect(isEverydayWardrobe(undefined)).toBe(true);
+      expect(isEverydayWardrobe(null)).toBe(true);
+      expect(isEverydayWardrobe({ stateKey: "everyday" })).toBe(true);
+    });
+
+    it("treats a declared alternate state as NOT everyday", () => {
+      expect(isEverydayWardrobe(pyjamas)).toBe(false);
+    });
+  });
+
+  describe("describeWardrobeForPrompt", () => {
+    it("emits NO directive for an everyday / absent wardrobe (safe absence)", () => {
+      expect(describeWardrobeForPrompt(undefined)).toEqual([]);
+      expect(describeWardrobeForPrompt(null)).toEqual([]);
+      expect(describeWardrobeForPrompt({ stateKey: "everyday" })).toEqual([]);
+    });
+
+    it("pins the declared outfit AND keeps identity on the reference (alternate)", () => {
+      const lines = describeWardrobeForPrompt(pyjamas);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain("star-print flannel pyjamas");
+      expect(lines[0]).toContain("NOT in the everyday reference outfit");
+      // Non-everyday scenes MUST still instruct face/hair follow the identity ref.
+      expect(lines[1]).toContain("face, hair, skin tone and features");
+      expect(lines[1]).toContain("identity reference");
+    });
+
+    it("emits nothing when an alternate state has no appearance text", () => {
+      expect(describeWardrobeForPrompt({ stateKey: "pyjamas" })).toEqual([]);
+    });
+  });
+
+  describe("describeWardrobeForReview", () => {
+    it("carries the declared wardrobe as an outfit note for an alternate state", () => {
+      const [note, ...rest] = describeWardrobeForReview(pyjamas);
+      expect(rest).toHaveLength(0);
+      expect(note).toContain("star-print flannel pyjamas");
+      expect(note).toContain("no outfit reference image");
+    });
+
+    it("emits NO note for everyday / absent (compare against the reference as today)", () => {
+      expect(describeWardrobeForReview(undefined)).toEqual([]);
+      expect(describeWardrobeForReview({ stateKey: "everyday" })).toEqual([]);
+    });
+  });
+
+  describe("referencesForWardrobe (the outfit-reference attachment decision)", () => {
+    it("omits the outfit reference but KEEPS identity + second-angle (alternate)", () => {
+      const kept = referencesForWardrobe(childRefs, pyjamas);
+      expect(kept.map((r) => r.slot)).toEqual(["identity", "second-angle"]);
+      // Identity is never conditional (rule 7).
+      expect(kept.some((r) => r.slot === "identity")).toBe(true);
+      expect(kept.some((r) => r.slot === "outfit")).toBe(false);
+    });
+
+    it("keeps every reference unchanged for everyday / absent (byte-identical)", () => {
+      expect(referencesForWardrobe(childRefs, undefined)).toEqual(childRefs);
+      expect(
+        referencesForWardrobe(childRefs, { stateKey: "everyday" }),
+      ).toEqual(childRefs);
+    });
+  });
+
+  describe("buildImageSceneRequest wardrobe carriage", () => {
+    const base = {
+      spec: { scene: "Nell on the porch", aspect: "landscape" as const },
+      artBible: MVP_ART_BIBLE,
+      placements: [{ characterKey: "nell", prominent: true }],
+      references: childRefs,
+      continuityNotes: [],
+      seed: 7,
+    };
+
+    it("omits wardrobe when none is supplied (everyday default, safe absence)", () => {
+      expect(buildImageSceneRequest(base).wardrobe).toBeUndefined();
+    });
+
+    it("carries the declared wardrobe with a trimmed appearance", () => {
+      const r = buildImageSceneRequest({
+        ...base,
+        wardrobe: { stateKey: "pyjamas", appearance: "  cosy pyjamas  " },
+      });
+      expect(r.wardrobe).toEqual({
+        stateKey: "pyjamas",
+        appearance: "cosy pyjamas",
+      });
+    });
   });
 });

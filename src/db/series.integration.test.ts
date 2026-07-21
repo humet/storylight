@@ -200,7 +200,7 @@ const REVIEW_CLEAN = {
 function illustrationFixture(ctx: Canonical) {
   const keys = ctx.anchorKeys ?? [];
   return {
-    schemaVersion: "illustration-plan.v2",
+    schemaVersion: "illustration-plan.v3",
     illustrations: keys.map((anchorKey) => ({
       anchorKey,
       caption: "The wood glows softly.",

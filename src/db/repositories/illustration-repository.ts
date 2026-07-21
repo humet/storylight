@@ -47,6 +47,8 @@ export function createIllustrationRepository(
           companions: illustrationSpecs.companions,
           settingLocation: illustrationSpecs.settingLocation,
           settingTimeOfDay: illustrationSpecs.settingTimeOfDay,
+          wardrobeStateKey: illustrationSpecs.wardrobeStateKey,
+          wardrobeAppearance: illustrationSpecs.wardrobeAppearance,
           subjectCharacterIds: illustrationSpecs.subjectCharacterIds,
           prominentCharacterId: illustrationSpecs.prominentCharacterId,
           storyType: stories.type,
@@ -90,6 +92,17 @@ export function createIllustrationRepository(
                 timeOfDay: row.settingTimeOfDay,
               }
             : null,
+        // Wardrobe is carried only for a non-everyday state (an everyday/absent scene
+        // stores NULL and reads back as null ⇒ the everyday outfit reference is used,
+        // exactly like a pre-part-2 spec). The appearance is denormalised alongside.
+        wardrobe: row.wardrobeStateKey
+          ? {
+              stateKey: row.wardrobeStateKey,
+              ...(row.wardrobeAppearance
+                ? { appearance: row.wardrobeAppearance }
+                : {}),
+            }
+          : null,
         subjectCharacterIds: row.subjectCharacterIds,
         prominentCharacterId: row.prominentCharacterId ?? null,
         latestRevisionNumber: latest?.n ?? 0,

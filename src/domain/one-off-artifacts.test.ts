@@ -186,6 +186,143 @@ describe("crossReferenceIllustrationPlan", () => {
   });
 });
 
+describe("crossReferenceIllustrationPlan wardrobe (ADR-008 part 2)", () => {
+  it("rejects a scene referencing an undeclared wardrobe state", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v3",
+          illustrations: [
+            {
+              anchorKey: "anchor-1",
+              caption: "c",
+              sceneDescription: "s",
+              aspect: "portrait",
+              wardrobe: "pyjamas",
+            },
+          ],
+          // no wardrobeStates declared ⇒ "pyjamas" is undeclared
+        },
+        ["anchor-1"],
+      ),
+    ).toThrow();
+  });
+
+  it("accepts a scene referencing a declared state or the reserved everyday key", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v3",
+          illustrations: [
+            {
+              anchorKey: "anchor-1",
+              caption: "c",
+              sceneDescription: "s",
+              aspect: "portrait",
+              wardrobe: "pyjamas",
+            },
+            {
+              anchorKey: "anchor-2",
+              caption: "c",
+              sceneDescription: "s",
+              aspect: "portrait",
+              wardrobe: "everyday",
+            },
+          ],
+          wardrobeStates: [{ key: "pyjamas", appearance: "flannel pyjamas" }],
+        },
+        ["anchor-1", "anchor-2"],
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects redeclaring the reserved 'everyday' key", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v3",
+          illustrations: [],
+          wardrobeStates: [{ key: "everyday", appearance: "a sweater" }],
+        },
+        [],
+      ),
+    ).toThrow();
+  });
+
+  it("rejects a duplicate wardrobe state key", () => {
+    expect(() =>
+      crossReferenceIllustrationPlan(
+        {
+          schemaVersion: "illustration-plan.v3",
+          illustrations: [],
+          wardrobeStates: [
+            { key: "pyjamas", appearance: "flannel pyjamas" },
+            { key: "pyjamas", appearance: "cotton pyjamas" },
+          ],
+        },
+        [],
+      ),
+    ).toThrow();
+  });
+});
+
+describe("normaliseIllustrationPlan wardrobe (ADR-008 part 2)", () => {
+  it("denormalises identical appearance onto every scene sharing a state", () => {
+    const specs = normaliseIllustrationPlan({
+      schemaVersion: "illustration-plan.v3",
+      illustrations: [
+        {
+          anchorKey: "a1",
+          caption: "c",
+          sceneDescription: "s",
+          aspect: "landscape",
+          wardrobe: "pyjamas",
+        },
+        {
+          anchorKey: "a2",
+          caption: "c",
+          sceneDescription: "s",
+          aspect: "landscape",
+          wardrobe: "pyjamas",
+        },
+      ],
+      wardrobeStates: [
+        { key: "pyjamas", appearance: "  star-print flannel pyjamas  " },
+      ],
+    });
+    // Both scenes carry the SAME (trimmed) appearance copied from the single
+    // story-level declaration — five pyjama scenes get identical pyjamas.
+    expect(specs[0].wardrobe).toEqual({
+      stateKey: "pyjamas",
+      appearance: "star-print flannel pyjamas",
+    });
+    expect(specs[1].wardrobe).toEqual(specs[0].wardrobe);
+  });
+
+  it("resolves everyday / absent to NO wardrobe (safe absence)", () => {
+    const specs = normaliseIllustrationPlan({
+      schemaVersion: "illustration-plan.v3",
+      illustrations: [
+        {
+          anchorKey: "a1",
+          caption: "c",
+          sceneDescription: "s",
+          aspect: "landscape",
+          wardrobe: "everyday",
+        },
+        {
+          anchorKey: "a2",
+          caption: "c",
+          sceneDescription: "s",
+          aspect: "landscape",
+        },
+      ],
+    });
+    expect(specs[0].wardrobe).toBeUndefined();
+    expect(specs[1].wardrobe).toBeUndefined();
+  });
+});
+
 describe("normaliseIllustrationPlan (ADR-008 parts 3–4)", () => {
   it("trims + carries companions and setting, and omits them when absent", () => {
     const [withExtras, plain] = normaliseIllustrationPlan({

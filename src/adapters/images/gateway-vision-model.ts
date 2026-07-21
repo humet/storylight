@@ -12,6 +12,7 @@ import type {
 } from "@/application/ports/vision-model";
 import type { ImageRouteResolution } from "@/domain/image-route";
 import type { VisionVerdict } from "@/domain/image-job";
+import { describeWardrobeForReview } from "@/domain/image-request";
 import type { ReferenceImage } from "@/domain/reference-image";
 import { REFERENCE_VIEW_LABELS } from "@/domain/reference-view";
 import { generationFailedError } from "@/lib/errors";
@@ -76,10 +77,17 @@ function buildInstruction(request: VisionReviewRequest): string {
     "For identityByChild: for EACH expected key, set matches=true only if that child in the final illustration clearly has the SAME face and features as their reference; otherwise matches=false.",
     "For observedCount: count only the distinct CHILDREN (people who appear to be children) visible in the final illustration. Do NOT count adults, companions, or animals — they are reviewed separately.",
   ];
-  if (request.outfitNotes.length > 0) {
-    lines.push(
-      `Expected outfit continuity: ${request.outfitNotes.join("; ")}.`,
-    );
+  // ADR-008 part 2: feed the declared wardrobe into the EXISTING outfit-continuity
+  // mechanism (the `outfitConsistent` verdict — no new verdict). Everyday/absent ⇒
+  // no note ⇒ the reviewer compares the outfit against the attached everyday outfit
+  // reference exactly as today; a non-everyday state ⇒ a note describing the declared
+  // outfit to compare against (no outfit reference is attached for such a scene).
+  const outfitNotes = [
+    ...request.outfitNotes,
+    ...describeWardrobeForReview(request.wardrobe),
+  ];
+  if (outfitNotes.length > 0) {
+    lines.push(`Expected outfit continuity: ${outfitNotes.join("; ")}.`);
   }
   if (request.propNotes.length > 0) {
     lines.push(`Expected prop continuity: ${request.propNotes.join("; ")}.`);

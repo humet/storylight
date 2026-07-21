@@ -20,15 +20,22 @@ import { boundedString, semanticKey, type WireSchema } from "./wire";
  *    plan validates under v2 (the new fields are optional), so the model may declare
  *    a cast + setting that become canonical when the app persists the validated
  *    artifact — the sanctioned path (models never write canonical state directly).
- *    The pipeline uses v2 for all NEW generation; the schema-version pins recorded
- *    on a series remain provenance records (the established M6/M8 machinery uses the
- *    source-controlled active schema, not a runtime version resolver). A published
- *    v1 spec read back downstream carries no companions + no setting ⇒ deterministic
- *    safe absence (no directive emitted, review skips the new checks).
+ *    Kept as an immutable record.
+ *  - `v3` (ADR-008 part 2): adds plan-level OPTIONAL `wardrobeStates` (the child's
+ *    wardrobe STATES declared ONCE for the story — key + short appearance; `everyday`
+ *    is reserved/implicit and may not be redeclared) and a per-scene OPTIONAL
+ *    `wardrobe` state-KEY reference (defaults to `everyday`). v3 is a strict SUPERSET
+ *    of v2: a v2/v1-shaped plan validates under v3 (the new fields are optional), so
+ *    a scene with no wardrobe reads back as `everyday` — deterministic safe absence
+ *    (the everyday outfit reference is used, no directive, review compares against it
+ *    exactly as before part 2). The pipeline uses v3 for all NEW generation; the
+ *    schema-version pins recorded on a series remain provenance records (the M6/M8
+ *    machinery uses the source-controlled active schema, not a runtime resolver).
  */
 
 const SCHEMA_VERSION_V1 = "illustration-plan.v1";
 const SCHEMA_VERSION_V2 = "illustration-plan.v2";
+const SCHEMA_VERSION_V3 = "illustration-plan.v3";
 
 const AspectWireSchema = z.enum(["portrait", "landscape", "square"]);
 
@@ -47,7 +54,7 @@ export const IllustrationPlanArtifactV1 = z.strictObject({
   illustrations: z.array(SpecWireSchemaV1).max(5),
 });
 
-// --- v2 (active; ADR-008 parts 3–4) -------------------------------------
+// --- shared field schemas (ADR-008) -------------------------------------
 
 /**
  * A recurring NON-child companion the model DECLARES for a scene (ADR-008 part 3,
@@ -66,6 +73,18 @@ const SettingWireSchema = z.strictObject({
   timeOfDay: z.enum(TIMES_OF_DAY),
 });
 
+/**
+ * A declared WARDROBE STATE (ADR-008 part 2): a semantic `key` (e.g. `pyjamas`,
+ * `raincoat`) + a short `appearance`. Declared ONCE at story level; the reserved
+ * `everyday` key may not appear here (rejected in domain cross-reference).
+ */
+const WardrobeStateWireSchema = z.strictObject({
+  key: semanticKey(),
+  appearance: boundedString(1, 200),
+});
+
+// --- v2 (immutable published record; ADR-008 parts 3–4) -----------------
+
 const SpecWireSchemaV2 = z.strictObject({
   anchorKey: semanticKey(),
   caption: boundedString(1, 200),
@@ -82,16 +101,43 @@ export const IllustrationPlanArtifactV2 = z.strictObject({
   illustrations: z.array(SpecWireSchemaV2).max(5),
 });
 
-export type IllustrationPlanWire = z.infer<typeof IllustrationPlanArtifactV2>;
+// --- v3 (active; ADR-008 part 2 — per-scene wardrobe states) ------------
+
+const SpecWireSchemaV3 = z.strictObject({
+  anchorKey: semanticKey(),
+  caption: boundedString(1, 200),
+  sceneDescription: boundedString(1, 600),
+  aspect: AspectWireSchema,
+  companions: z.array(CompanionWireSchema).max(6).optional(),
+  setting: SettingWireSchema.optional(),
+  /**
+   * Optional (safe absence): the wardrobe STATE-KEY the child wears in this scene.
+   * Must be `everyday` (reserved) or a key declared in plan-level `wardrobeStates`
+   * (enforced in domain cross-reference). Absent ⇒ `everyday`.
+   */
+  wardrobe: semanticKey().optional(),
+});
+
+export const IllustrationPlanArtifactV3 = z.strictObject({
+  schemaVersion: z.literal(SCHEMA_VERSION_V3),
+  illustrations: z.array(SpecWireSchemaV3).max(5),
+  /**
+   * Optional (safe absence): the child's wardrobe STATES for the whole story,
+   * declared ONCE (max 4). Each scene references one by key. `everyday` is reserved.
+   */
+  wardrobeStates: z.array(WardrobeStateWireSchema).max(4).optional(),
+});
+
+export type IllustrationPlanWire = z.infer<typeof IllustrationPlanArtifactV3>;
 
 /**
  * The ACTIVE illustration-plan wire schema the pipeline resolves for new
- * generation (v2). v1 remains exported as an immutable record.
+ * generation (v3). v1/v2 remain exported as immutable records.
  */
 export const illustrationPlanWireSchema: WireSchema<IllustrationPlanWire> = {
-  schemaVersion: SCHEMA_VERSION_V2,
+  schemaVersion: SCHEMA_VERSION_V3,
   name: "StorylightIllustrationPlan",
   description:
-    "A plan for a story's illustrations: for each marked anchor, a short caption, a scene description, an aspect ratio, and — where the scene has them — the recurring non-child companions (name/species/appearance) and the setting (location + time of day). No images are generated at this stage.",
-  schema: IllustrationPlanArtifactV2,
+    "A plan for a story's illustrations: for each marked anchor, a short caption, a scene description, an aspect ratio, and — where the scene has them — the recurring non-child companions (name/species/appearance), the setting (location + time of day), and the child's wardrobe. Declare the child's wardrobe STATES once at story level (each a key + appearance) and reference one per scene; scenes with no wardrobe are the everyday outfit. No images are generated at this stage.",
+  schema: IllustrationPlanArtifactV3,
 };

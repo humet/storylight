@@ -17,11 +17,13 @@ import type {
 import { MVP_ART_BIBLE } from "@/domain/art-bible";
 import {
   buildImageSceneRequest,
+  referencesForWardrobe,
   type ImageSceneRequest,
   type IllustrationAspect,
   type SceneCast,
   type SceneCompanion,
   type SceneSetting,
+  type SceneWardrobe,
 } from "@/domain/image-request";
 import {
   decideImageReview,
@@ -121,6 +123,8 @@ interface PreparePayload {
   companions: SceneCompanion[];
   /** Canonical setting + time-of-day (ADR-008 part 4), or null when not carried. */
   setting: SceneSetting | null;
+  /** Declared wardrobe state (ADR-008 part 2), or null ⇒ everyday reference outfit. */
+  wardrobe: SceneWardrobe | null;
   expectedChildren: { characterKey: string }[];
   expectedCount: number;
 }
@@ -256,8 +260,19 @@ export function createGenerateIllustrationWorkflow(
       );
       if (character) characterIdByKey.set(character.key, characterId);
     }
+    // ADR-008 part 2 — THE OUTFIT-REFERENCE ATTACHMENT DECISION (one place). The
+    // identity + second-angle references are ALWAYS resolved (rule 7 — identity is
+    // never conditional). The everyday outfit-slot reference is attached ONLY for an
+    // everyday (or absent/pre-part-2) wardrobe; a non-everyday scene drops it so the
+    // everyday outfit does not fight the story-motivated change, relying instead on
+    // the deterministic wardrobe directive (describeWardrobeForPrompt) in the prompt.
+    // This gates BOTH generation and the vision review (same `referenceImages`).
+    const attachable = referencesForWardrobe(
+      prep.references,
+      prep.wardrobe ?? undefined,
+    );
     const referenceImages: ReferenceImage[] = [];
-    for (const ref of prep.references) {
+    for (const ref of attachable) {
       // Only child-derived references (identity/second-angle/outfit) carry a
       // characterKey + view + resolvable approved bytes; extras (scenery) are not
       // identity anchors and are skipped here.
@@ -348,11 +363,12 @@ export function createGenerateIllustrationWorkflow(
       artBible: MVP_ART_BIBLE,
       placements,
       // Older in-flight payloads (pre-ADR-008) may lack `cast`/`companions`/
-      // `setting`; the builder treats absent values as "no directive", so a resume
-      // stays correct (safe absence).
+      // `setting`/`wardrobe`; the builder treats absent values as "no directive", so
+      // a resume stays correct (safe absence).
       cast: prep.cast,
       companions: prep.companions ?? [],
       ...(prep.setting ? { setting: prep.setting } : {}),
+      ...(prep.wardrobe ? { wardrobe: prep.wardrobe } : {}),
       references: prep.references,
       continuityNotes: [],
       seed: seedFrom(execution.id, phase),
@@ -472,11 +488,13 @@ export function createGenerateIllustrationWorkflow(
         imageContentType: generated.contentType,
         expectedChildren: prep.expectedChildren,
         expectedCount: prep.expectedCount,
-        // ADR-008 part 3/4: the review verifies the scene against canonical facts —
-        // each companion's species and the setting/time-of-day (safe absence when
-        // none is carried).
+        // ADR-008 part 2/3/4: the review verifies the scene against canonical facts —
+        // each companion's species, the setting/time-of-day, and the declared
+        // wardrobe (safe absence when none is carried; everyday ⇒ the review compares
+        // the outfit against the attached everyday reference exactly as today).
         expectedCompanions: prep.companions ?? [],
         ...(prep.setting ? { setting: prep.setting } : {}),
+        ...(prep.wardrobe ? { wardrobe: prep.wardrobe } : {}),
         outfitNotes: [],
         propNotes: [],
         tone: job.caption,
@@ -609,11 +627,13 @@ export function createGenerateIllustrationWorkflow(
             subjects,
             references,
             cast,
-            // Companions + setting are CANONICAL scene facts carried on the spec
-            // (declared in the illustration plan, persisted at publish). A
-            // pre-ADR-008 spec has none ⇒ empty/null ⇒ no directive, review skips.
+            // Companions + setting + wardrobe are CANONICAL scene facts carried on
+            // the spec (declared in the illustration plan, persisted at publish). A
+            // pre-ADR-008 spec has none ⇒ empty/null ⇒ no directive, review skips /
+            // wardrobe defaults to the everyday outfit reference.
             companions: job.companions,
             setting: job.setting,
+            wardrobe: job.wardrobe,
             expectedChildren: children.map((c) => ({
               characterKey: c.characterKey,
             })),

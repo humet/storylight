@@ -266,6 +266,15 @@ export const illustrationSpecs = pgTable(
     /** Canonical time-of-day (ADR-008 part 4); NULL when not carried. */
     settingTimeOfDay: illustrationTimeOfDay("setting_time_of_day"),
     /**
+     * The declared wardrobe STATE-KEY the child wears in this scene (ADR-008 part 2).
+     * NULL ⇒ the everyday reference outfit (safe absence; every pre-part-2 row). A
+     * non-null, non-"everyday" key carries {@link wardrobeAppearance} denormalised
+     * from the single story-level declaration (so scenes sharing a state match).
+     */
+    wardrobeStateKey: varchar("wardrobe_state_key", { length: 64 }),
+    /** The declared outfit for a non-everyday wardrobe state (ADR-008 part 2); NULL otherwise. */
+    wardrobeAppearance: varchar("wardrobe_appearance", { length: 200 }),
+    /**
      * DB character ids of the children who appear in this scene (M9). Populated at
      * publish from the workflow's active cast so the image job knows whose approved
      * reference set to attach (rule 6). Empty when the scene has no named children.
