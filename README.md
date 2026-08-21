@@ -8,20 +8,29 @@ The core product idea is simple: **AI should disappear behind the reading experi
 
 From a simple bedtime idea, Storylight builds a persistent visual identity and carries it into the finished illustrated story.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshots/story-idea.jpg" width="220" alt="Storylight story idea creation screen" /></td>
-    <td align="center"><img src="docs/screenshots/character-reference.jpg" width="220" alt="Storylight character reference paintings for Rosa" /></td>
-    <td align="center"><img src="docs/screenshots/story-reader.jpg" width="220" alt="Finished illustrated story in the Storylight reader" /></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>1. Start with an idea</strong></td>
-    <td align="center"><strong>2. Keep characters recognisable</strong></td>
-    <td align="center"><strong>3. Read the finished story</strong></td>
-  </tr>
-</table>
+### 1. Start with an idea
 
-The middle step is the hard part: character reference sets are approved, versioned, and used to condition later image generation so a recurring character remains recognisable across scenes and stories.
+<a href="docs/screenshots/IMG_1467.jpeg">
+  <img src="docs/screenshots/IMG_1467.jpeg" width="620" alt="Storylight story idea creation screen" />
+</a>
+
+Storylight begins with a guided prompt rather than a chat interface, helping shape the story before generation begins.
+
+### 2. Keep characters recognisable
+
+<a href="docs/screenshots/IMG_1471.jpeg">
+  <img src="docs/screenshots/IMG_1471.jpeg" width="620" alt="Storylight character reference paintings for Rosa" />
+</a>
+
+Recurring characters use approved reference artwork so later image generation can preserve identity across scenes and stories. Reference sets are approved, versioned, and used to condition subsequent generations rather than relying on prompt-only descriptions.
+
+### 3. Read the finished story
+
+<a href="docs/screenshots/IMG_1472.jpeg">
+  <img src="docs/screenshots/IMG_1472.jpeg" width="620" alt="Finished illustrated story in the Storylight reader" />
+</a>
+
+The finished experience is designed to feel like a polished illustrated reader rather than an AI tool.
 
 ## The interesting engineering problem
 
