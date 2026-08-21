@@ -1,36 +1,140 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Storylight
 
-## Getting Started
+Storylight is a mobile-first application for creating personalised, illustrated bedtime stories with persistent characters, planned story arcs, and continuity that survives across chapters.
 
-First, run the development server:
+The core product idea is simple: **AI should disappear behind the reading experience.** Storylight is designed to feel like a small premium children's publishing system rather than an AI chat interface.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## The interesting engineering problem
+
+Generating one story or one image is comparatively easy. Maintaining a coherent illustrated series is not.
+
+Storylight treats continuity, character identity, model behaviour, and publication state as explicit engineering concerns:
+
+- series are planned before Chapter 1 is generated
+- canonical story state lives in Postgres, never in chat history
+- model outputs are schema-validated and domain-validated before they can affect state
+- published chapters and illustrations are immutable revisions
+- recurring characters use approved reference assets rather than prompt-only descriptions
+- illustration generation is reference-conditioned and followed by multimodal review
+- prompt, schema, model-route, and visual-profile versions can be pinned per series so an infrastructure/model change does not silently alter an existing story
+- provider-specific SDKs are isolated behind application-owned adapters
+
+## Generation pipeline
+
+A simplified story/illustration flow looks like this:
+
+```text
+Parent idea
+    ↓
+Structured story/series plan
+    ↓
+Validated canonical story state
+    ↓
+Chapter generation
+    ↓
+Character + scene specification
+    ↓
+Reference-conditioned image generation
+    ↓
+Vision review / repair / escalation
+    ↓
+Immutable approved publication
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The implementation deliberately separates **model suggestion** from **canonical state transitions**. Models can propose content; deterministic application code decides whether that content is valid and may be persisted.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## AI systems work
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Storylight is also a sandbox for production-minded AI engineering rather than just prompt experimentation. The repository includes work around:
 
-## Learn More
+- capability-based model routing through Vercel AI Gateway
+- independent language, image-generation, and vision-review routes
+- versioned prompts, schemas, model routes, and visual profiles
+- model-route provenance on generated assets
+- per-series route pinning for visual continuity
+- structured output with defensive parsing/failure handling
+- reference-image conditioning for stable character identity
+- automated multimodal review and repair paths
+- eval/probe tooling for testing model behaviour before changing production routes
+- explicit cost bookkeeping and lower-cost model substitution where quality permits
+- deterministic fake model adapters so CI/E2E does not depend on paid model calls
 
-To learn more about Next.js, take a look at the following resources:
+## Stack
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Framework:** Next.js 16 App Router + React 19
+- **Language:** TypeScript
+- **AI:** Vercel AI SDK + AI Gateway
+- **Workflows:** Vercel Workflow
+- **Database:** Postgres + Drizzle ORM
+- **Storage:** Vercel Blob / private object storage abstraction
+- **Auth:** Better Auth
+- **Validation:** Zod
+- **Testing:** Vitest, Playwright, Storybook browser tests
+- **UI:** Tailwind CSS
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Engineering approach
 
-## Deploy on Vercel
+This project is built heavily with AI-assisted engineering, including coding agents. That is intentional: the interesting part is not whether an agent can emit code, but how the surrounding system constrains and verifies it.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The repository therefore keeps explicit project invariants in `AGENTS.md`, architecture decisions in `docs/decisions/`, and treats tests, migrations, evals, and typed/domain boundaries as the authority over generated implementation.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Some of the rules enforced by the project include:
+
+- models never write directly to canonical state
+- provider calls stay outside domain/frontend code
+- existing series do not silently change model or visual-profile versions
+- wrong child identity is a blocking image-review failure
+- rejected content is never returned by reader APIs
+- changes to canonical transitions require appropriate tests
+
+See [`AGENTS.md`](AGENTS.md) and [`docs/README.md`](docs/README.md) for the detailed architecture and documentation map.
+
+## Local development
+
+### Requirements
+
+- Node.js 22+
+- pnpm
+- Postgres
+- a Vercel AI Gateway key for real model calls
+- Vercel Blob credentials when using remote object storage
+
+### Setup
+
+```bash
+pnpm install
+cp .env.example .env.local
+pnpm dev
+```
+
+Environment variables are documented in [`.env.example`](.env.example). Local/test infrastructure can use the repository's development fallbacks where applicable.
+
+### Quality checks
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm test
+pnpm test:e2e
+pnpm build
+pnpm db:validate
+pnpm db:check
+```
+
+Additional model evaluation/probe tooling is available through the repository scripts.
+
+## Documentation
+
+The detailed design is intentionally kept in source control. Useful starting points:
+
+- [`docs/01-product/vision.md`](docs/01-product/vision.md) — product intent
+- [`docs/02-storytelling/continuity.md`](docs/02-storytelling/continuity.md) — canonical continuity model
+- [`docs/03-ai/orchestration.md`](docs/03-ai/orchestration.md) — model orchestration
+- [`docs/03-ai/image-generation.md`](docs/03-ai/image-generation.md) — illustration pipeline
+- [`docs/03-ai/evaluation.md`](docs/03-ai/evaluation.md) — evaluation approach
+- [`docs/decisions/`](docs/decisions/) — architecture decision records
+
+## Status
+
+Storylight is an actively developed personal project. It is shared publicly as a portfolio/engineering project; production family data, credentials, and private generated assets are not part of the repository.
