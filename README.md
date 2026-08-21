@@ -32,6 +32,18 @@ Recurring characters use approved reference artwork so later image generation ca
 
 The finished experience is designed to feel like a polished illustrated reader rather than an AI tool.
 
+## Why I built this
+
+Storylight started with bedtime stories for my kids.
+
+I was using ChatGPT to create them, but I kept running into the same problems: characters would gradually change, illustrations would stop looking like the same people, details from earlier parts of the story would be forgotten, and it was difficult to continue a story naturally over several nights.
+
+I wanted something where a character created tonight could still look, speak, and behave like themselves next week — and where an ongoing story could build on what had already happened rather than starting from a fresh prompt every time.
+
+That simple problem led to the more interesting engineering work behind Storylight: persistent canonical state, character reference sets, continuity rules, versioned prompts and models, reference-conditioned image generation, multimodal review, and immutable published chapters.
+
+The goal is for the AI to disappear behind the experience. It should feel like returning to the same book and the same characters, not starting another chat session.
+
 ## The interesting engineering problem
 
 Generating one story or one image is comparatively easy. Maintaining a coherent illustrated series is not.
