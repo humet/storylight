@@ -4,6 +4,25 @@ Storylight is a mobile-first application for creating personalised, illustrated 
 
 The core product idea is simple: **AI should disappear behind the reading experience.** Storylight is designed to feel like a small premium children's publishing system rather than an AI chat interface.
 
+## Product flow
+
+From a simple bedtime idea, Storylight builds a persistent visual identity and carries it into the finished illustrated story.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/story-idea.jpg" width="220" alt="Storylight story idea creation screen" /></td>
+    <td align="center"><img src="docs/screenshots/character-reference.jpg" width="220" alt="Storylight character reference paintings for Rosa" /></td>
+    <td align="center"><img src="docs/screenshots/story-reader.jpg" width="220" alt="Finished illustrated story in the Storylight reader" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>1. Start with an idea</strong></td>
+    <td align="center"><strong>2. Keep characters recognisable</strong></td>
+    <td align="center"><strong>3. Read the finished story</strong></td>
+  </tr>
+</table>
+
+The middle step is the hard part: character reference sets are approved, versioned, and used to condition later image generation so a recurring character remains recognisable across scenes and stories.
+
 ## The interesting engineering problem
 
 Generating one story or one image is comparatively easy. Maintaining a coherent illustrated series is not.
